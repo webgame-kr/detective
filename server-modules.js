@@ -1177,10 +1177,16 @@ class Game {
         const p = actorId ? this.room.players[actorId] : null;
         return Boolean(p && ((p.escortedUntil ?? 0) > this.now() || (p.escortedDay === this.room.day && p.location === p.escortedTo)));
       },
-      seated: (objectId) => this.room.order.filter((id) => {
-        const at = this.room.players[id].seatedAt;
-        return at && (!objectId || at === objectId);
-      }).length,
+      // a desk watched for the whole day (lingerForDay, or alone) counts as one person still at it
+      seated: (objectId) => {
+        const n = this.room.order.filter((id) => {
+          const at = this.room.players[id].seatedAt;
+          return at && (!objectId || at === objectId);
+        }).length;
+        const watching = this.room.world.watching ?? {};
+        const lingers = objectId ? watching[objectId] === this.room.day : Object.values(watching).includes(this.room.day);
+        return Math.max(n, lingers ? 1 : 0);
+      },
     };
   }
 
@@ -1333,7 +1339,7 @@ class Game {
         Object.assign(p, { escortedUntil: this.now() + ms, escortedDay: this.room.day, escortedTo: p.location });
       },
       bark: (text) => this.bark(gm.id, text),
-      summon: (guardId, x, y) => this.noiseAt(guardId, x, y, Infinity),
+      summon: (guardId, x, y) => this.noiseAt(guardId, x, y, Infinity, gimmicks.get(gm.type).location(gm.config)),
     };
   }
 
@@ -1390,12 +1396,14 @@ class Game {
   }
 
   // A step on a loud floor: guards in earshot come to look. `reach` is how far the floor carries.
-  noiseAt(guardId, x, y, reach) {
+  // A noise at (x, y) in locationId: only guards walking that same place can hear it.
+  noiseAt(guardId, x, y, reach, locationId) {
     if (!this.watchers) return;
     for (const gm of this.ix.gimmicks) {
       if (gm.type !== 'guard_patrol' || (guardId && gm.id !== guardId)) continue;
       const mod = gimmicks.get(gm.type);
       const api = this.gimmickApi(gm);
+      if (locationId && mod.location(api.config) !== locationId) continue;
       const far = reach === 'hearing' ? api.config.hearing ?? 6 : reach;
       if (mod.hear?.(api, x, y, far)) this.out.important = true;
     }
@@ -2545,7 +2553,7 @@ const ACTIONS = {
       // a loud floor: wood carries 3 steps, metal as far as a guard can hear
       const sound = loc.floor?.[ny]?.[nx];
       if (sound === 'w' || sound === 'm') {
-        g.noiseAt(null, nx, ny, sound === 'w' ? 3 : 'hearing');
+        g.noiseAt(null, nx, ny, sound === 'w' ? 3 : 'hearing', loc.id);
         return { moved: true, noise: sound };
       }
       return { moved: true };

@@ -650,103 +650,148 @@ const starsScene = {
   },
 };
 
-// ---------- radio · 생방송에 없던 15분 ----------
-const A = {
-  sky: '#141a33', skyLow: '#232a4a', city: '#2b2f4d', cityLit: '#e0b85a', wall: '#4a4560', wallDark: '#34304a',
-  mast: '#8a8fa6', blink: '#e2585e', onair: '#e2585e', onairOff: '#5a3440', glass: '#2f6b8a',
-  desk: '#5a4636', deskTop: '#7a5e46', deck: '#2a2c3a', reel: '#c9c3b0', tape: '#5a3a2a', led: '#7ee08a', ledRed: '#e2585e',
-  floor: '#2a2a36', shelf: '#4a3a30', box: '#9c7a52', torch: 'rgba(246, 216, 90, 0.35)', coat: '#2b3a67', cap: '#1b2240', skin: '#efbc9c', ink: '#1a1622',
+
+// ---------- 생방송에 없던 15분 (radio) ----------
+// colours from the station cover, the studio map and the DJ sprite
+const Q = {
+  sky0: '#141626', sky1: '#181b2e', sky2: '#1d2236', sky3: '#232a42', far: '#2b3352', farLit: '#3a4466',
+  wall: '#3b3a4d', wallLit: '#4d4c63', wallDark: '#2e2d3e', win: '#252736', lit: '#e7c879', litGlow: '#8a7a54',
+  red: '#d4524a', redDark: '#2a1218', redGlow: '#6a2a32', tower: '#7d8593', beacon: '#ff5a4a', street: '#20212c', rain: '#5d6788',
+  panel: '#4a3f52', panelLit: '#5a4d62', desk: '#8a6240', deskLit: '#a87b52', mic: '#2c2b3a', micLit: '#4a4b55',
+  hair: '#5a3a2e', skin: '#efbc9c', cardigan: '#e6d6b2', glass: '#5b7a97', glassLit: '#9ec3df', console: '#3b3a4d',
+  meter: '#7fe0a0', reel: '#2a2b33', reelLit: '#c9c9c9', clock: '#f3e8cf', ink: '#2a2622',
+  conc: '#5d5e66', concDark: '#45464f', shelf: '#5e6470', box: '#b8925e', boxDark: '#8a6a46', label: '#f6edd8', beam: '#fff0b8',
 };
 
-function station(ctx, t) {
-  px(ctx, 0, 0, W, 50, A.sky);
-  px(ctx, 0, 50, W, 40, A.skyLow);
-  for (let i = 0; i < 30; i++) px(ctx, Math.floor(hash(i + 70) * W), Math.floor(hash(i + 7) * 40), 1, 1, '#c9c3b0');
-  // the city behind, a few windows still lit
-  for (let x = 0; x < W; x += 12) {
-    const h = 14 + Math.floor(hash(x + 1) * 16);
-    px(ctx, x, 80 - h, 11, h, A.city);
-    if (hash(x + 9) > 0.5) px(ctx, x + 4, 84 - h, 2, 2, A.cityLit);
+function radioExterior(ctx, t) {
+  [Q.sky0, Q.sky1, Q.sky2, Q.sky3].forEach((c, i) => px(ctx, 0, i * 15, W, 16, c));
+  for (let i = 1; i < 4; i++) for (let x = i % 2; x < W; x += 2) px(ctx, x, i * 15 - 1, 1, 1, [Q.sky0, Q.sky1, Q.sky2, Q.sky3][i]);   // dithered seams
+  for (let i = 0; i < 16; i++) if (Math.sin(t * 2 + i) > -0.4) px(ctx, Math.floor(hash(i + 900) * W), Math.floor(hash(i + 950) * 30), 1, 1, '#9aa3c0');
+  // far skyline (대기 원근: paler, bluer)
+  for (const [x0, w, h] of [[0, 30, 34], [26, 18, 24], [118, 20, 28], [134, 26, 36]]) {
+    px(ctx, x0, 74 - h, w, h, Q.far);
+    for (let y = 74 - h + 4; y < 70; y += 6) for (let x = x0 + 3; x < x0 + w - 3; x += 5) if (hash(x * 7 + y) > .6) px(ctx, x, y, 2, 2, Q.farLit);
   }
-  // the station and its mast
-  px(ctx, 50, 38, 60, 46, A.wall);
-  px(ctx, 50, 80, 60, 4, A.wallDark);
-  for (let y = 44; y < 76; y += 8) for (let x = 56; x < 106; x += 10) px(ctx, x, y, 6, 4, hash(x * y) > 0.6 ? A.cityLit : A.glass);
-  px(ctx, 79, 6, 2, 32, A.mast);
-  for (let y = 10; y < 36; y += 6) px(ctx, 77, y, 6, 1, A.mast);
-  if (Math.floor(t * 2) % 2 === 0) px(ctx, 79, 4, 2, 2, A.blink);
-  // the ON AIR sign over the door
-  const on = t > 0.8;
-  px(ctx, 68, 28, 24, 8, on ? A.onair : A.onairOff);
-  if (on) px(ctx, 66, 26, 28, 1, 'rgba(226, 88, 94, 0.5)');
-  px(ctx, 70, 31, 20, 2, on ? '#ffe0d8' : '#7a4a52');
-  px(ctx, 0, 84, W, 6, A.floor);
+  // the station
+  const bx = 42, by = 26, bw = 74, bh = 48;
+  px(ctx, bx, by, bw, bh, Q.wall); px(ctx, bx, by, bw, 1, Q.wallLit); px(ctx, bx + bw - 3, by, 3, bh, Q.wallDark);
+  const lit = [[1, 1], [2, 3], [0, 2]];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 6; c++) {
+    const x = bx + 5 + c * 11, y = by + 6 + r * 14;
+    const on = lit.some(([a, b]) => a === r && b === c) && t > 0.5 + c * 0.25;
+    if (on) { for (let k = 0; k < 12; k += 2) px(ctx, x - 2 + k, y - 2, 1, 1, Q.litGlow); }   // 이미시브: spill on the wall
+    px(ctx, x, y, 7, 8, on ? Q.lit : Q.win); px(ctx, x + 3, y, 1, 8, Q.wall);
+  }
+  // ON AIR sign switches on, with a red halo on the wall
+  const onAir = t > 1.6;
+  const sx = bx + 14, sy = by + 15;
+  if (onAir) for (let k = -3; k < 21; k += 2) { px(ctx, sx + k, sy - 2, 1, 1, Q.redGlow); px(ctx, sx + k + 1, sy + 6, 1, 1, Q.redGlow); }
+  px(ctx, sx - 1, sy - 1, 20, 7, Q.redDark); px(ctx, sx, sy, 18, 5, onAir ? Q.red : '#4a2a30');
+  if (onAir) for (let k = 2; k < 16; k += 3) px(ctx, sx + k, sy + 2, 2, 1, '#ffe3dc');
+  // the transmitter tower and its beacon
+  const tx = bx + 56;
+  for (let i = 0; i < 22; i++) { const w = Math.max(1, 5 - Math.floor(i / 5)); px(ctx, tx - w, by - 1 - i, 1, 1, Q.tower); px(ctx, tx + w, by - 1 - i, 1, 1, Q.tower); if (i % 5 === 0) px(ctx, tx - w, by - 1 - i, w * 2 + 1, 1, Q.tower); }
+  const blink = Math.floor(t * 2) % 2 === 0;
+  px(ctx, tx - 1, by - 24, 3, 2, blink ? Q.beacon : '#7a2a30');
+  if (blink) { px(ctx, tx - 3, by - 24, 1, 1, Q.redGlow); px(ctx, tx + 3, by - 24, 1, 1, Q.redGlow); }
+  px(ctx, 0, 74, W, 16, Q.street); px(ctx, 0, 74, W, 1, '#3a3b4c');
+  for (let x = (t * 20) % 12 - 12; x < W; x += 12) px(ctx, x, 82, 6, 1, '#4a4a5e');
+  // rain
+  for (let i = 0; i < 46; i++) {
+    const x = (hash(i + 400) * W + t * 18) % W, y = (hash(i + 470) * 90 + t * 70) % 90;
+    px(ctx, x, y, 1, 1, Q.rain); px(ctx, x - 1, y + 1, 1, 1, Q.rain);
+  }
 }
 
-function reel(ctx, cx, cy, angle, wound) {
-  const r = 5 + wound;
-  for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) if (x * x + y * y <= r * r) px(ctx, cx + x, cy + y, 1, 1, x * x + y * y <= 25 ? A.reel : A.tape);
-  for (let k = 0; k < 3; k++) {
-    const a = angle + (k * Math.PI * 2) / 3;
-    px(ctx, cx + Math.round(Math.cos(a) * 3), cy + Math.round(Math.sin(a) * 3), 1, 1, A.ink);
+function radioStudio(ctx, t) {
+  // soundproofed wall, the ON AIR lamp, a clock, the window into the control room
+  px(ctx, 0, 0, W, H, '#33303f');
+  for (let x = 0; x < 96; x += 8) { px(ctx, x, 0, 8, 58, x % 16 ? Q.panel : Q.panelLit); px(ctx, x + 3, 4, 2, 50, '#3e3446'); }
+  px(ctx, 96, 0, 64, 58, '#2a2938');
+  px(ctx, 100, 10, 56, 36, Q.glass); px(ctx, 102, 12, 52, 32, '#2f4a62'); px(ctx, 102, 12, 52, 2, Q.glassLit);
+  // the control room beyond the glass: console and a reel deck turning
+  px(ctx, 104, 34, 48, 8, Q.console);
+  for (let x = 106; x < 150; x += 3) px(ctx, x, 36, 1, 3, '#a3aebc');
+  const rx = 140, ry = 22, ang = t * 6;
+  px(ctx, rx - 8, ry - 6, 18, 12, '#5a4d42');
+  for (const cx of [rx - 4, rx + 5]) {
+    for (let a = 0; a < 6; a++) { const th = ang + a * Math.PI / 3; px(ctx, Math.round(cx + Math.cos(th) * 3), Math.round(ry + Math.sin(th) * 3), 1, 1, Q.reelLit); }
+    px(ctx, cx, ry, 1, 1, Q.reel);
   }
-  px(ctx, cx, cy, 1, 1, A.ink);
+  // ON AIR lamp with a red spill
+  px(ctx, 30, 6, 30, 9, Q.redDark); px(ctx, 31, 7, 28, 7, Q.red);
+  for (let k = 33; k < 56; k += 4) px(ctx, k, 9, 2, 3, '#ffe3dc');
+  for (let k = 26; k < 64; k += 2) px(ctx, k, 17, 1, 1, Q.redGlow);
+  // clock reading 22:04
+  px(ctx, 72, 6, 18, 9, Q.ink); digits(ctx, '22:04', 72, 8, Q.clock);
+  // desk and the microphone
+  px(ctx, 0, 58, W, 32, '#2a2733');
+  px(ctx, 10, 60, 100, 8, Q.desk); px(ctx, 10, 60, 100, 2, Q.deskLit); px(ctx, 10, 68, 100, 2, '#5a3a28');
+  px(ctx, 62, 38, 2, 22, Q.mic); px(ctx, 58, 32, 9, 7, Q.micLit); px(ctx, 59, 33, 2, 5, '#6a6b78');
+  // the DJ seen from behind, facing the mic: wavy hair over the shoulders, headphone band, cream cardigan
+  px(ctx, 31, 29, 16, 3, Q.hair); px(ctx, 29, 32, 20, 12, Q.hair); px(ctx, 27, 38, 3, 12, Q.hair); px(ctx, 48, 38, 3, 12, Q.hair);
+  px(ctx, 33, 31, 4, 2, '#7a5444'); px(ctx, 31, 34, 2, 1, '#7a5444');            // 애니소트로픽 하이라이트 on the hair
+  px(ctx, 30, 28, 18, 2, '#2c2b33'); px(ctx, 28, 33, 3, 6, '#2c2b33'); px(ctx, 47, 33, 3, 6, '#2c2b33'); px(ctx, 48, 35, 2, 2, '#b86672');
+  px(ctx, 26, 44, 26, 16, Q.cardigan); px(ctx, 26, 44, 2, 16, '#f3e8cf'); px(ctx, 49, 44, 3, 16, '#c9b791');
+  px(ctx, 30, 44, 18, 2, '#c9b791');                                               // AO under the hair
+  // the level meter keeps moving: the voice is on air
+  px(ctx, 76, 46, 20, 10, '#1c1f2a');
+  for (let i = 0; i < 6; i++) {
+    const h = 1 + Math.floor((Math.sin(t * 11 + i * 1.7) * 0.5 + 0.5) * 7);
+    px(ctx, 78 + i * 3, 55 - h, 2, h, i > 4 ? Q.red : Q.meter);
+  }
 }
 
-function studio(ctx, t) {
-  px(ctx, 0, 0, W, H, A.wallDark);
-  px(ctx, 0, 60, W, 30, A.desk);
-  px(ctx, 0, 58, W, 3, A.deskTop);
-  // the tape deck: two reels, a counter that skips
-  px(ctx, 30, 14, 100, 42, A.deck);
-  const spin = t * 6;
-  reel(ctx, 56, 32, spin, Math.round(4 - t));
-  reel(ctx, 104, 32, spin, Math.round(1 + t));
-  px(ctx, 56, 42, 48, 1, A.tape);
-  const jumped = t > 1.8;
-  px(ctx, 64, 46, 32, 8, A.ink);
-  digits(ctx, jumped ? '00:47' : t > 0.9 ? '00:32' : '00:31', 68, 47, jumped ? A.ledRed : A.led);
-  if (jumped && Math.floor(t * 4) % 2 === 0) px(ctx, 98, 47, 3, 5, A.ledRed);
-  // the ON AIR lamp on the wall
-  px(ctx, 136, 8, 16, 6, A.onair);
-}
-
-function archive(ctx, t) {
-  px(ctx, 0, 0, W, H, A.ink);
-  px(ctx, 0, 70, W, 20, A.floor);
-  // shelves of tape boxes
-  for (let s = 0; s < 4; s++) {
-    const x = 8 + s * 40;
-    px(ctx, x, 14, 28, 56, A.shelf);
-    for (let row = 0; row < 4; row++) for (let b = 0; b < 4; b++) px(ctx, x + 2 + b * 7, 18 + row * 13, 5, 9, hash(s * 16 + row * 4 + b) > 0.2 ? A.box : A.shelf);
+function radioBasement(ctx, t) {
+  // dark basement stairs and the archive shelf; a flashlight sweeps once, then the slot is empty
+  px(ctx, 0, 0, W, H, '#191a24');
+  for (let i = 0; i < 7; i++) { px(ctx, 6 + i * 6, 10 + i * 9, 30, 4, '#4a4e5a'); px(ctx, 6 + i * 6, 14 + i * 9, 30, 1, '#2a2b33'); }
+  px(ctx, 4, 6, 2, 76, '#5e6470'); px(ctx, 36, 6, 2, 30, '#5e6470');
+  // 쇳소리: two short strokes ring off the iron stairs
+  const clank = t > 0.3 && t < 1.2;
+  if (clank) for (let k = 0; k < 3; k++) { const r = 4 + k * 3 + Math.floor((t - 0.3) * 8); px(ctx, 22 + r, 34 - k, 2, 1, '#c9c9c9'); px(ctx, 22 - r, 36 - k, 2, 1, '#c9c9c9'); }
+  // the shelf
+  const sx = 70, sy = 26;
+  px(ctx, sx, sy, 80, 46, Q.shelf); px(ctx, sx, sy, 80, 2, '#7d8593');
+  for (let row = 0; row < 3; row++) {
+    px(ctx, sx + 2, sy + 15 + row * 14, 76, 2, '#454a56');
+    for (let c = 0; c < 7; c++) {
+      const bxx = sx + 4 + c * 11, byy = sy + 4 + row * 14;
+      const slot = row === 1 && c === 3;
+      if (slot && t > 1.9) {
+        px(ctx, bxx, byy, 9, 11, '#262833');               // empty slot
+        for (let k = 0; k < 9; k += 2) px(ctx, bxx + k, byy + 10, 1, 1, '#6a6e7a');   // dust edge
+        continue;
+      }
+      px(ctx, bxx, byy, 9, 11, c % 2 ? Q.box : Q.boxDark); px(ctx, bxx + 2, byy + 3, 5, 3, Q.label);
+      if (slot) px(ctx, bxx + 2, byy + 3, 5, 3, '#edbf72');
+    }
   }
-  // the guard walks past with a torch, its beam sweeping the boxes
-  const gx = Math.round(-20 + ease(clamp(t / 3, 0, 1)) * 140);
-  const sweep = Math.sin(t * 2.2) * 10;
-  ctx.fillStyle = A.torch;
-  ctx.beginPath();
-  ctx.moveTo(gx + 8, 52);
-  ctx.lineTo(gx + 46, 34 + sweep);
-  ctx.lineTo(gx + 46, 62 + sweep);
-  ctx.closePath();
-  ctx.fill();
-  px(ctx, gx, 50, 8, 20, A.coat);
-  px(ctx, gx + 1, 42, 6, 8, A.skin);
-  px(ctx, gx, 40, 8, 3, A.cap);
-  px(ctx, gx + 7, 52, 3, 2, '#f6d88a');
+  digits(ctx, '1997', sx + 36, sy + 48, '#9aa3c0');
+  // ambient: the whole basement sits in cool dark; a flashlight crosses once
+  const beamX = -30 + (t - 0.9) * 140;
+  if (t > 0.9 && t < 2.2) {
+    for (let y = 0; y < H; y++) for (let x = Math.floor(beamX); x < beamX + 26; x++) {
+      if (x < 0 || x >= W) continue;
+      const d = Math.abs(x - (beamX + 13 + (y - 45) * 0.15)) / 13;
+      if (d < 1 && (d < 0.55 || (x + y) % 2 === 0)) { ctx.globalAlpha = d < .55 ? 0.22 : 0.12; px(ctx, x, y, 1, 1, Q.beam); ctx.globalAlpha = 1; }
+    }
+  }
+  if (t > 1.9) { const k = Math.floor((t - 1.9) / 0.5) % 2; if (k === 0) { px(ctx, sx + 36, sy + 17, 11, 1, Q.label); px(ctx, sx + 36, sy + 31, 11, 1, Q.label); } }
 }
 
 const radioScene = {
   duration: 9.6,
   captions: [
-    [0, '자정, 심야 생방송이 한창인 방송국.', false],
-    [3.2, '테이프 기록에는 있는데, 방송에는 없던 15분.', false],
-    [6.6, '지하 자료실에는 밤새 경비가 돈다.', false],
+    [0, '개국 30주년, 특집 생방송 첫날 밤의 청운FM.', false],
+    [3.2, '“오늘 밤도 이 목소리와 함께해요.”', true],
+    [6.4, '그 시각, 지하 계단에서 쇳소리가 울렸다.', false],
+    [8.2, '그리고 1997년 여름의 테이프가 사라졌다.', false],
   ],
   draw(ctx, t) {
-    if (t < 3.2) return station(ctx, t);
-    if (t < 6.6) return studio(ctx, t - 3.2);
-    archive(ctx, t - 6.6);
+    if (t < 3.2) return radioExterior(ctx, t);
+    if (t < 6.4) return radioStudio(ctx, t - 3.2);
+    radioBasement(ctx, t - 6.4);
   },
 };
 
