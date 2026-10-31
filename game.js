@@ -1987,7 +1987,7 @@ async function exportSave() {
   const blob = new Blob([JSON.stringify(res.body)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const label = (res.body.summary?.stageLabel ?? '').replace(/\s+/g, '');
-  const a = h('a', { href: url, download: `백록탐정단-${code}-${label}.json` });
+  const a = h('a', { href: url, download: `탐정실록-${code}-${label}.json` });
   document.body.append(a);
   a.click();
   a.remove();

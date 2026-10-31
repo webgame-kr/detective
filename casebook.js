@@ -85,7 +85,7 @@ function pixelSvg(rows, color) {
 function liaisonLine(book, cases) {
   const solved = cases.filter((c) => book[c.id]);
   const last = Object.entries(book).sort((a, b) => (b[1].at ?? '').localeCompare(a[1].at ?? ''))[0]?.[1];
-  if (!solved.length) return '어서 와요, 백록 탐정단 연락 담당 윤서하예요. 의뢰 파일은 책상 위에 펼쳐 뒀어요. 마음에 드는 것부터 열어 보세요.';
+  if (!solved.length) return '어서 와요, 탐정단 연락 담당 윤서하예요. 의뢰 파일은 책상 위에 펼쳐 뒀어요. 마음에 드는 것부터 열어 보세요.';
   if (solved.length >= cases.length) return '들어온 의뢰가 전부 닫혔어요. 다들 고생했어요. 새 파일이 오면 제일 먼저 연락할게요.';
   const lead = last ? `‘${last.title}’ 보고서는 잘 받았어요. ` : '';
   return solved.length === 1
