@@ -3780,7 +3780,10 @@ function loadKey(file) {
   return key;
 }
 
+// Without a key (the browser builds, where the whole case is in the page anyway) the payload is
+// written as it is; a server with a key only ever writes and accepts sealed files.
 function seal(key, payload, summary) {
+  if (!key) return { format: FORMAT, version: FILE_VERSION, summary, plain: payload };
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(AAD);
@@ -3792,19 +3795,24 @@ const badFile = () => new AppError(400, 'bad_save_file', '저장 파일이 손�
 
 // The readable summary in a file is for people; only the sealed payload is trusted.
 function open(key, file) {
-  if (!isPlainObject(file) || file.format !== FORMAT || typeof file.data !== 'string') throw badFile();
+  if (!isPlainObject(file) || file.format !== FORMAT) throw badFile();
   if (file.version !== FILE_VERSION) throw new AppError(400, 'save_version', '이 서버가 읽을 수 없는 저장 파일 형식이에요.');
-  if (file.data.length > MAX_FILE_BYTES * 2) throw new AppError(413, 'too_large', '저장 파일이 너무 커요.');
   let payload;
-  try {
+  if (!key) {
+    if (!isPlainObject(file.plain)) throw badFile();
+    if (JSON.stringify(file.plain).length > MAX_FILE_BYTES * 8) throw new AppError(413, 'too_large', '저장 파일이 너무 커요.');
+    payload = file.plain;
+  } else try {
+    if (typeof file.data !== 'string') throw badFile();
+    if (file.data.length > MAX_FILE_BYTES * 2) throw new AppError(413, 'too_large', '저장 파일이 너무 커요.');
     const raw = Buffer.from(file.data, 'base64');
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
     decipher.setAAD(AAD);
     decipher.setAuthTag(raw.subarray(12, 28));
     const plain = Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]);
     payload = JSON.parse(zlib.gunzipSync(plain, { maxOutputLength: MAX_FILE_BYTES * 8 }).toString('utf8'));
-  } catch {
-    throw badFile();
+  } catch (err) {
+    throw err instanceof AppError && err.code === 'too_large' ? err : badFile();
   }
   const s = payload?.snapshot;
   if (!isPlainObject(payload) || !isPlainObject(s) || !isPlainObject(s.caseRef) || !Array.isArray(payload.roster) || !payload.roster.length) throw badFile();

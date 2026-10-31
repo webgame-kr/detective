@@ -179,9 +179,6 @@
       throw new AppError(400, 'bad_json', '잘못된 요청 형식이에요.');
     }
   };
-  const offline = () => {
-    throw new AppError(501, 'artifact_only', '브라우저 체험판에서는 저장 파일을 쓸 수 없어요. 저장 칸은 그대로 쓸 수 있어요.');
-  };
 
   // the event stream: the room manager writes server-sent events into this as if it were a response
   function stream(entry, pid, signal) {
@@ -218,13 +215,16 @@
   const routes = [
     ['GET', /^\/api\/cases$/, () => json(200, { cases: content.listedIds().map((id) => ({ ...caseSummary(content.latest(id)), versions: content.versionsOf(id) })) })],
     ['POST', /^\/api\/rooms$/, (m, init) => json(201, rooms.createRoom(body(init)))],
-    ['POST', /^\/api\/rooms\/import$/, offline],
+    ['POST', /^\/api\/rooms\/import$/, (m, init) => json(201, rooms.importRoom(body(init)))],
     ['GET', new RegExp(`^/api/rooms/${C}$`), ([code]) => json(200, rooms.publicInfo(code))],
     ['DELETE', new RegExp(`^/api/rooms/${C}$`), ([code], init) => {
       const { entry, pid } = rooms.authenticate(code, bearer(init));
       return json(200, rooms.deleteRoom(entry, pid));
     }],
-    ['GET', new RegExp(`^/api/rooms/${C}/save-file$`), offline],
+    ['GET', new RegExp(`^/api/rooms/${C}/save-file$`), ([code], init) => {
+      const { entry, pid } = rooms.authenticate(code, bearer(init));
+      return json(200, rooms.exportSave(entry, pid));
+    }],
     ['POST', new RegExp(`^/api/rooms/${C}/join$`), ([code], init) => json(201, rooms.join(code, body(init)))],
     ['GET', new RegExp(`^/api/rooms/${C}/stream$`), ([code], init) => {
       const { entry, pid } = rooms.authenticate(code, bearer(init));
