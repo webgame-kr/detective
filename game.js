@@ -219,7 +219,11 @@ function begin(token) {
       }
     },
     onPos(p) {
-      if (p.id === state?.me.id && ahead > 0) return; // our own step is already drawn
+      if (p.id === state?.me.id) {
+        // a step event older than one already confirmed is from the past: drop it
+        if (!noteServerMe({ location: p.location, x: p.x, y: p.y, facing: p.facing }, p.stateVersion ?? 0)) return;
+        if (ahead > 0) return; // our own step is already drawn
+      }
       const mp = state?.map?.players.find((x) => x.id === p.id);
       if (!mp || state.map.id !== p.location) return;
       Object.assign(mp, { x: p.x, y: p.y, facing: p.facing });
@@ -2126,19 +2130,40 @@ const FACE = { up: 'n', down: 's', left: 'w', right: 'e' };
 const MAX_AHEAD = 2;
 let ahead = 0;
 let predicted = null; // { location, x, y, facing } while steps are unconfirmed
-let serverMe = null; // our position in the latest view, before any prediction
+// The newest place the server has put us, with the room version it was true at. Full views, step
+// events and step replies travel separately (the stream may lag behind the replies, more so through
+// a tunnel or a host browser), so an older one must not pull us back to where we already were.
+let serverMe = null; // { location, x, y, facing, v }
+let serverEpoch = null;
 let moveChain = Promise.resolve();
 
 function myMapEntry() {
   return state?.map?.players.find((p) => p.id === state.me.id) ?? null;
 }
 
-// A fresh view lags behind steps still in flight: keep drawing where we already are.
+// true when this is news (as new as, or newer than, what we know)
+function noteServerMe(pos, v) {
+  if (serverMe && v < serverMe.v) return false;
+  serverMe = { ...pos, v };
+  return true;
+}
+
+// A fresh view lags behind steps still in flight: keep drawing where we already are. A view that is
+// older than a step the server already confirmed draws us at that step instead.
 function keepPrediction() {
+  if (state.stateEpoch !== serverEpoch) {
+    serverEpoch = state.stateEpoch;
+    serverMe = null;
+  }
   const me = myMapEntry();
-  serverMe = me ? { location: state.map.id, x: me.x, y: me.y, facing: me.facing } : null;
-  if (ahead > 0 && predicted && me && predicted.location === state.map.id) Object.assign(me, { x: predicted.x, y: predicted.y, facing: predicted.facing });
-  else if (ahead === 0) predicted = null;
+  if (!me) return;
+  noteServerMe({ location: state.map.id, x: me.x, y: me.y, facing: me.facing }, state.stateVersion ?? 0);
+  if (ahead > 0 && predicted && predicted.location === state.map.id) Object.assign(me, { x: predicted.x, y: predicted.y, facing: predicted.facing });
+  else {
+    if (ahead === 0) predicted = null;
+    if (serverMe.location === state.map.id) Object.assign(me, { x: serverMe.x, y: serverMe.y, facing: serverMe.facing });
+  }
+  state.me.position = { location: state.map.id, x: me.x, y: me.y };
 }
 
 function predictStep(dir) {
@@ -2236,11 +2261,13 @@ function step() {
   const drawn = predictStep(dir);
   // a step we could not draw (exit, wall, object) goes alone, after the ones in flight
   if (!drawn && ahead > 0) return;
+  const target = drawn ? { ...predicted } : null; // where this step puts us once the server agrees
   ahead += 1;
   moveChain = moveChain.then(async () => {
     const res = await conn.act('move', { dir });
     ahead -= 1;
     const confirmed = res.status === 200 && (res.body.moved || !drawn);
+    if (confirmed && target && res.body.moved && typeof res.body.stateVersion === 'number') noteServerMe(target, res.body.stateVersion);
     if (res.status === 200 && res.body.reason === 'got_up' && res.body.message) toast(res.body.message, 'info');
     if (res.status === 200 && res.body.noise) noiseMarks.push({ x: myMapEntry()?.x, y: myMapEntry()?.y, at: performance.now(), kind: res.body.noise });
     if (res.status === 200 && res.body.reason === 'locked' && Date.now() - lastLockToast > 1500) {
