@@ -1,7 +1,7 @@
 import { api, seats, Connection, h } from './net.js';
 import { drawMap, pickTarget, TILE, ART_SCALE } from './map.js';
 import { looksReady, lookSet, lookThumb, spriteThumb, animLength, findLook } from './sprites.js';
-import { caseFolder, caseSheet, clueCard, stepIndicator, icon, playersText, withParticle, DIFFICULTY } from './ui.js';
+import { caseFolder, caseSheet, clueCard, stepIndicator, icon, playersText, withParticle, DIFFICULTY, drawerGroup, pageStrip, onPageKeys } from './ui.js';
 import { drawMinimap, focusOf } from './minimap.js';
 import { mountNoteUI } from './noteui.js';
 import { DialogueBox, portrait } from './dialogue.js';
@@ -263,7 +263,8 @@ function render() {
   steps.hidden = s.room.stage === 'lobby';
   if (!steps.hidden) renderInto(steps, `${s.room.stage}:${s.room.day}`, () => stepIndicator(s.room.stage, s.room.day));
   const goal = s.room.broken ? { icon: 'file', title: '진행할 수 없는 방', text: '이 방은 지금 진행할 수 없어요.', note: '' } : goalFor(s.room.stage);
-  const callout = ['lobby', 'intro'].includes(s.room.stage) && !s.room.broken;
+  // the stage's buttons live in the docked action bar on every stage (docs/ui-onescreen-spec.md 원칙 3)
+  const callout = false;
   // at night the day's checklist comes first, above the board the team is reviewing
   const goalEl = $('goal');
   const goalFirst = s.room.stage === 'night' && Boolean(s.goals?.length);
@@ -306,7 +307,7 @@ function render() {
   hadMap = Boolean(s.map);
   renderStage();
   renderTabs();
-  if (!fieldMode()) renderChat();
+  if (!fieldMode()) renderChat(s.room.stage === 'lobby' && lobbyChatBox?.isConnected ? lobbyChatBox : $('chatBox'));
   renderActionbar();
   renderDialogue();
   renderField();
@@ -866,7 +867,7 @@ function briefView() {
 // Night and the final deduction show the board in the scene, so the side keeps the notebook.
 function visibleTabs() {
   if (!state.map) return ['players', 'notices'];
-  const boardInScene = ['night', 'final'].includes(state.room.stage);
+  const boardInScene = state.room.stage === 'night';
   return ['notebook', boardInScene ? null : 'board', state.characters?.length ? 'people' : null, 'players', 'saves', 'notices'].filter(Boolean);
 }
 
@@ -894,7 +895,7 @@ function renderStage() {
     return;
   }
   const builders = { broken: brokenView, lobby: lobbyView, intro: introView, night: nightView, final: finalView, result: resultView };
-  const keyData = stage === 'night' ? [s.board, s.players, s.notebook?.clues.length] : stage === 'final' ? [s.final, s.players, s.me] : stage === 'lobby' ? [s.case, s.players, s.room, s.me, lobbyCases, Boolean(lookSet())] : [s.case, s.final, s.room.broken];
+  const keyData = stage === 'night' ? [s.board, s.players, s.notebook?.clues.length] : stage === 'final' ? [s.final, s.players, s.me, finalPage] : stage === 'lobby' ? [s.case, s.players, s.room, s.me, lobbyCases, Boolean(lookSet()), s.chat.length] : [s.case, s.final, s.room.broken, resultPage];
   renderInto(area, JSON.stringify(keyData), builders[stage]);
 }
 
@@ -927,11 +928,11 @@ function syncMotion() {
     }
     if (m.x !== p.x || m.y !== p.y) {
       const cur = slide(m, now);
-      // Steps that arrive bunched up (a slow connection) are walked over, a step's time per tile;
-      // only real teleports (doors, far jumps) skip the slide.
+      // Steps that arrive bunched up (a slow connection, or a batch of steps sent together) are
+      // walked over, a step's time per tile; only real teleports (doors, far jumps) skip the slide.
       const dist = Math.abs(p.x - cur.x) + Math.abs(p.y - cur.y);
-      const jump = dist > 4;
-      const dur = STEP_MS * Math.max(1, Math.min(dist, 4)) * (dist > 1.5 ? 0.75 : 1);
+      const jump = dist > STEP_BATCH + 2;
+      const dur = STEP_MS * Math.max(1, Math.min(dist, STEP_BATCH + 2)) * (dist > 1.5 ? 0.75 : 1);
       Object.assign(m, { fx: jump ? p.x : cur.x, fy: jump ? p.y : cur.y, x: p.x, y: p.y, t0: now, dur, walkUntil: jump ? 0 : now + dur + 170, action: null });
     }
     m.facing = p.facing ?? m.facing;
@@ -1130,9 +1131,9 @@ function fitCanvas(canvas) {
   const side = rail && getComputedStyle(rail).flexDirection === 'column';
   const right = rail && side ? rail.offsetWidth + 9 : 0;
   const bottom = rail && !side ? rail.offsetHeight : 0;
-  // the date, goals and minimap column on the left too: the map shrinks into the space between, as
-  // long as that space is still a usable width
-  const corner = rail && side ? document.querySelector('#hud .nui-corner') : null;
+  // the date, goals and minimap column on the left too (unless folded to the date plate): the map
+  // shrinks into the space between, as long as that space is still a usable width
+  const corner = rail && side ? document.querySelector('#hud .nui-corner:not(.is-folded)') : null;
   const leftWant = corner ? corner.offsetWidth + 18 : 0;
   const left = leftWant && innerWidth - right - leftWant >= 480 ? leftWant : 0;
   const key = `${canvas.width}x${canvas.height}:${innerWidth}x${innerHeight}:${fieldMode()}:${right}:${bottom}:${left}`;
@@ -1228,8 +1229,57 @@ function lobbyView() {
       })
     : [...s.players.map(seat), ...Array.from({ length: Math.max(0, capacity - s.players.length) }, () => emptySeat())];
   const caseIndex = Math.max(0, (lobbyCases ?? []).findIndex((c) => c.id === s.case?.id));
-  const choices = (lobbyCases ?? []).map((c, i) => [c, i]).filter(([c]) => !s.room.settings.solo || c.solo);
-  return h('div', { class: 'stack' },
+  const st = s.room.settings;
+  const lookIndex = looks ? looks.characters.findIndex((c) => c.id === mine) : -1;
+  const unread = Math.max(0, s.chat.length - lobbyChatSeen);
+  // the right column: what is changed now and then, folded to one line each (one open at a time)
+  const drawers = drawerGroup([
+    looks ? {
+      id: 'looks',
+      title: '내 탐정 외형',
+      summary: lookIndex >= 0 ? `외형 ${lookIndex + 1}` : '아직 고르지 않음',
+      body: () => [
+        h('p', { class: 'muted small' }, '외형은 모습만 바뀌어요. 능력이나 역할 차이는 없고, 다른 사람과 같은 외형도 고를 수 있어요.'),
+        h('div', { class: 'look-picker' }, ...looks.characters.map((c, i) => h('button', {
+          class: `look${mine === c.id ? ' selected' : ''}`,
+          title: `외형 ${i + 1}`,
+          'aria-pressed': mine === c.id ? 'true' : 'false',
+          'aria-label': `외형 ${i + 1}`,
+          onclick: () => act('chooseAvatar', { avatar: c.id }),
+        }, lookThumb(c.id, 3)))),
+      ],
+    } : null,
+    {
+      id: 'case',
+      title: '사건',
+      summary: s.case ? s.case.title : '아직 고르지 않음',
+      body: () => [
+        s.case ? caseSheet(s.case, { index: caseIndex, compact: true }) : h('p', { class: 'muted' }, isHost ? '사건 파일을 골라 주세요.' : '방장이 사건 파일을 고르고 있어요.'),
+        isHost && !restore ? h('div', { class: 'row' }, h('button', { type: 'button', class: s.case ? '' : 'primary', onclick: casePickerModal }, s.case ? '사건 바꾸기' : '사건 고르기')) : null,
+        s.case && isHost && lobbyCases?.some((c) => c.id === s.case.id && c.version !== s.case.version)
+          ? h('p', { class: 'muted small' }, `이 방은 v${s.case.version}로 고정돼 있어요. 최신 버전으로 바꾸려면 파일을 다시 고르세요.`)
+          : null,
+      ],
+    },
+    {
+      id: 'settings',
+      title: '방 설정',
+      summary: `${DIFFICULTY[st.difficulty ?? 'guide'].name} · ${st.capacity}명 · 채팅 ${st.chat ? '켬' : '끔'}${st.locked && !st.solo ? ' · 잠김' : ''}`,
+      body: () => roomSettingsCard(),
+    },
+    st.chat ? {
+      id: 'chat',
+      title: '팀 채팅',
+      summary: unread ? `새 메시지 ${unread}` : s.chat.length ? `메시지 ${s.chat.length}` : '아직 조용해요',
+      body: () => {
+        lobbyChatSeen = s.chat.length;
+        lobbyChatBox = h('div', { class: 'lobby-chat' });
+        renderChat(lobbyChatBox);
+        return lobbyChatBox;
+      },
+    } : null,
+  ].filter(Boolean), { open: isHost && !s.case ? 'case' : looks && !isHost ? 'looks' : 'case', remember: s.room.code, onToggle: () => render() });
+  return h('div', { class: 'lobby-two' },
     h('section', { class: 'lobby' },
       h('span', { class: 'tag tag--rose' }, restore ? '저장 파일에서 이어하기' : s.room.settings.solo ? '단독 수사' : '수사본부'),
       h('h2', {}, s.room.settings.name),
@@ -1248,31 +1298,32 @@ function lobbyView() {
         : h('div', { class: 'stack tight' },
             h('span', { class: 'field' }, '초대 링크 — 친구에게 보내 주세요'),
             h('div', { class: 'row' }, h('code', { class: 'invite' }, link), h('button', { class: 'small', onclick: () => copy(link) }, '링크 복사')))),
-    h('div', { class: 'lobby-grid' },
-      looks
-        ? h('div', { class: 'card' },
-            h('h3', {}, '내 탐정 외형'),
-            h('p', { class: 'muted small' }, '외형은 모습만 바뀌어요. 능력이나 역할 차이는 없고, 다른 사람과 같은 외형도 고를 수 있어요.'),
-            h('div', { class: 'look-picker' }, ...looks.characters.map((c, i) => h('button', {
-              class: `look${mine === c.id ? ' selected' : ''}`,
-              title: `외형 ${i + 1}`,
-              'aria-pressed': mine === c.id ? 'true' : 'false',
-              'aria-label': `외형 ${i + 1}`,
-              onclick: () => act('chooseAvatar', { avatar: c.id }),
-            }, lookThumb(c.id, 3)))))
-        : null,
-      roomSettingsCard()),
-    h('section', { class: 'card' },
-      h('h3', {}, isHost ? '사건 파일철' : '선택한 사건'),
-      isHost && !restore
-        ? h('div', { class: 'case-pick' },
-            h('nav', { class: 'case-list', 'aria-label': '사건 파일철' }, ...choices.map(([c, i]) => caseFolder(c, { index: i, selected: s.case?.id === c.id && s.case?.version === c.version, onOpen: () => act('selectCase', { caseId: c.id }) }))),
-            s.case ? caseSheet(s.case, { index: caseIndex, compact: true }) : h('p', { class: 'muted' }, '왼쪽 파일철에서 사건을 골라 주세요.'))
-        : s.case ? caseSheet(s.case, { index: caseIndex, compact: true }) : h('p', { class: 'muted' }, '방장이 사건 파일을 고르고 있어요.'),
-      s.case && isHost && lobbyCases?.some((c) => c.id === s.case.id && c.version !== s.case.version)
-        ? h('p', { class: 'muted' }, `이 방은 v${s.case.version}로 고정돼 있어요. 최신 버전으로 바꾸려면 파일을 다시 고르세요.`)
-        : null),
+    drawers,
   );
+}
+
+// the lobby's chat drawer borrows the chat panel; render() hands it back elsewhere
+let lobbyChatBox = null;
+let lobbyChatSeen = 0;
+
+// Choosing the case in a window (the host, in the lobby): search by title, one press picks it.
+function casePickerModal() {
+  const s = state;
+  const all = (lobbyCases ?? []).map((c, i) => [c, i]).filter(([c]) => !s.room.settings.solo || c.solo);
+  let words = '';
+  const list = h('nav', { class: 'case-list picker__list', 'aria-label': '사건 파일철' });
+  const draw = () => {
+    const shown = all.filter(([c]) => !words || `${c.title} ${c.summary ?? ''}`.includes(words));
+    list.replaceChildren(...(shown.length ? shown.map(([c, i]) => caseFolder(c, { index: i, selected: s.case?.id === c.id && s.case?.version === c.version, onOpen: async () => {
+      await act('selectCase', { caseId: c.id });
+      closeModal();
+    } })) : [h('p', { class: 'muted' }, '맞는 사건이 없어요.')]));
+  };
+  const search = h('input', { type: 'search', placeholder: '사건 이름으로 찾기', 'aria-label': '사건 찾기', oninput: (e) => ((words = e.target.value.trim()), draw()) });
+  draw();
+  openModal(h('p', { class: 'eyebrow' }, '사건 파일철'), h('h3', {}, s.case ? '사건 바꾸기' : '사건 고르기'), h('div', { class: 'row picker__tools' }, search), list,
+    h('div', { class: 'row end' }, h('button', { type: 'button', onclick: closeModal }, '닫기')));
+  search.focus();
 }
 
 // Room settings: the host edits them, everyone else sees them.
@@ -1410,31 +1461,57 @@ function finalView() {
   };
   const missing = f.questions.filter((q) => !answers[q.id]).length;
   const unproved = f.questions.filter((q) => answers[q.id] && !proofOk(q)).length;
-  return h('div', { class: 'stack' },
-    h('div', { class: 'sheet' },
-      h('span', { class: 'tag tag--crim' }, '최종 추리'),
-      h('h2', {}, '최종 추리'),
-      h('p', { class: 'muted' }, solo()
+  // one question a page, then a page that checks them all (docs/ui-onescreen-spec.md 5.6)
+  const n = f.questions.length;
+  finalPage = Math.min(finalPage, n);
+  finalNav = { pages: n + 1, submit: isHost && complete ? submit : null, blocked: complete ? null : missing ? `${missing}문항 남음` : `근거 부족 ${unproved}문항` };
+  const votes = f.votes ?? {};
+  const split = (q) => !solo() && new Set(state.players.map((p) => votes[p.id]?.[q.id]).filter(Boolean)).size > 1;
+  const strip = pageStrip([...f.questions.map((_, i) => String(i + 1)), '확인'], finalPage, (i) => goFinalPage(i),
+    { marks: [...f.questions.map((q) => Boolean(answers[q.id] && proofOk(q))), complete], flags: [...f.questions.map(split), false] });
+  const question = (q, i) => h('fieldset', { class: 'question' },
+    h('legend', {}, `${i + 1} / ${n}  ${q.prompt}`),
+    ...q.options.map((o) => h('label', { class: `option${answers[q.id] === o.id ? ' chosen' : ''}` },
+      h('input', { type: 'radio', name: q.id, checked: answers[q.id] === o.id, onchange: () => pick(q.id, o.id) }), o.label, voteChips(q, o))),
+    voteBar(q),
+    q.pick ? h('div', { class: 'proof' },
+      h('div', { class: 'proof__head' }, h('strong', {}, '근거 카드'), h('span', { class: 'chip' }, `${evidence[q.id]?.length ?? 0}/${q.pick}`), h('span', { class: 'muted small' }, `이 답을 증명하는 단서 ${q.pick}장을 골라요`)),
+      h('div', { class: 'proof__cards' },
+        ...(evidence[q.id] ?? []).map((id) => h('span', { class: 'proof-card is-on' }, clueName(id), h('button', { type: 'button', class: 'proof-card__x', 'aria-label': `${clueName(id)} 빼기`, onclick: () => prove(q, id) }, '✕'))),
+        cards.length
+          ? h('button', { type: 'button', class: 'small', onclick: () => cardPicker(q, evidence[q.id] ?? [], (id) => prove(q, id)) }, (evidence[q.id]?.length ?? 0) ? '근거 바꾸기' : '근거 고르기')
+          : h('p', { class: 'muted small' }, '공동 보드에 단서가 있어야 근거로 고를 수 있어요.'))) : null);
+  const review = () => h('div', { class: 'stack' },
+    h('h3', {}, '답안 확인'),
+    h('ol', { class: 'final-review' }, ...f.questions.map((q, i) => h('li', {},
+      h('button', { type: 'button', class: 'linkish', onclick: () => goFinalPage(i) }, q.prompt),
+      h('div', {}, answers[q.id] ? `→ ${q.options.find((o) => o.id === answers[q.id])?.label}` : h('span', { class: 'warn' }, '아직 답하지 않았어요')),
+      q.pick ? h('div', { class: `small ${proofOk(q) ? 'muted' : 'warn'}` }, `근거: ${(evidence[q.id] ?? []).map(clueName).join(', ') || '없음'} (${evidence[q.id]?.length ?? 0}/${q.pick})`) : null))),
+    isHost
+      ? h('p', { class: complete ? 'muted' : 'warn' }, complete ? '모두 답했어요. 아래 막대의 ‘최종 제출’로 제출해요.' : missing ? '모든 문항에 답해야 제출할 수 있어요.' : `근거 카드를 다 고르지 않은 문항이 ${unproved}개 있어요.`)
+      : h('p', { class: 'muted' }, '답이 정해지면 방장이 확인하고 제출해요.'));
+  return h('div', { class: 'sheet final-sheet' },
+    h('div', { class: 'row wrap' }, h('span', { class: 'tag tag--crim' }, '최종 추리'),
+      h('span', { class: 'muted small' }, solo()
         ? '답을 고르고, 근거를 묻는 문항에는 그 답을 뒷받침하는 단서 카드도 골라 주세요.'
-        : f.draft.updatedBy ? `마지막 수정: ${playerName(f.draft.updatedBy)} (${ago(f.draft.updatedAt)})` : '아직 아무도 답을 고르지 않았어요. 누구나 답을 고를 수 있어요.'),
-      ...f.questions.map((q, i) => h('fieldset', { class: 'question' },
-        h('legend', {}, `${i + 1}. ${q.prompt}`),
-        ...q.options.map((o) => h('label', { class: `option${answers[q.id] === o.id ? ' chosen' : ''}` },
-          h('input', { type: 'radio', name: q.id, checked: answers[q.id] === o.id, onchange: () => pick(q.id, o.id) }), o.label, voteChips(q, o))),
-        voteBar(q),
-        q.pick ? h('div', { class: 'proof' },
-          h('div', { class: 'proof__head' }, h('strong', {}, '근거 카드'), h('span', { class: 'chip' }, `${evidence[q.id]?.length ?? 0}/${q.pick}`), h('span', { class: 'muted small' }, `이 답을 증명하는 단서 ${q.pick}장을 골라요`)),
-          h('div', { class: 'proof__cards' },
-            ...(evidence[q.id] ?? []).map((id) => h('span', { class: 'proof-card is-on' }, clueName(id))),
-            cards.length
-              ? h('button', { type: 'button', class: 'small', onclick: () => cardPicker(q, evidence[q.id] ?? [], (id) => prove(q, id)) }, (evidence[q.id]?.length ?? 0) ? '근거 바꾸기' : '근거 카드 고르기')
-              : h('p', { class: 'muted small' }, '공동 보드에 단서가 있어야 근거로 고를 수 있어요.'))) : null)),
-      isHost
-        ? h('button', { class: 'primary', disabled: !complete, onclick: submit }, complete ? '최종 제출' : missing ? '모든 문항에 답해야 제출할 수 있어요' : `근거 카드를 다 고르지 않은 문항이 ${unproved}개 있어요`)
-        : h('p', { class: 'muted' }, '답이 정해지면 방장이 확인하고 제출해요.'),
-    ),
-    boardView({ wide: true }),
+        : f.draft.updatedBy ? `마지막 수정: ${playerName(f.draft.updatedBy)} (${ago(f.draft.updatedAt)})` : '아직 아무도 답을 고르지 않았어요. 누구나 답을 고를 수 있어요.')),
+    strip,
+    finalPage < n ? question(f.questions[finalPage], finalPage) : review(),
   );
+}
+
+// the open page of the final deduction (a question, or the last page that checks them all)
+let finalPage = 0;
+let finalNav = null;
+function goFinalPage(i) {
+  if (!finalNav) return false;
+  const next = Math.max(0, Math.min(finalNav.pages - 1, i));
+  if (next === finalPage) return false;
+  finalPage = next;
+  render();
+  $('stage')?.scrollIntoView?.({ block: 'nearest' });
+  document.querySelector('.scene-col')?.scrollTo?.({ top: 0 });
+  return true;
 }
 
 // Choosing proof cards for one question in a window: search by words, narrow by kind or by who said it.
@@ -1484,19 +1561,22 @@ function resultView() {
   const q = state.final.questions;
   const label = (qid, oid) => q.find((x) => x.id === qid)?.options.find((o) => o.id === oid)?.label ?? '-';
   const mark = (ok) => h('span', { class: `mark mark--${ok ? 'ok' : 'bad'}`, role: 'img', 'aria-label': ok ? '맞음' : '틀림' });
-  return h('div', { class: 'sheet' },
-    h('span', { class: 'tag tag--brass' }, '수사 종료'),
-    h('h2', { class: 'score' }, `${r.correct} / ${r.total} 정답`),
-    r.proofTotal ? h('p', { class: 'muted' }, `근거까지 맞힌 문항 ${r.proved} / ${r.proofTotal}`) : null,
-    r.statements?.total ? h('p', { class: 'muted' }, `진술 판정 ${r.statements.matched} / ${r.statements.total} 일치${r.statements.judged < r.statements.total ? ` (판정한 증언 ${r.statements.judged}개)` : ''}`) : null,
-    r.stats ? h('p', { class: 'muted result-stats' }, [
-      `단서 ${r.stats.clues}/${r.stats.clueTotal}개 수집`,
-      r.stats.minutes ? `${r.stats.minutes}분 걸림` : null,
-      r.stats.hints ? `힌트 ${r.stats.hints}번` : null,
-      `난이도 ${DIFFICULTY[r.stats.difficulty]?.name ?? '입문'}`,
-    ].filter(Boolean).join(' · ')) : null,
-    h('button', { type: 'button', class: 'px', onclick: playEnding }, '엔딩 다시 보기'),
-    ...r.questions.map((x) => h('div', { class: `result-row ${x.correct ? 'ok' : 'bad'}` },
+  // three pages: the summary, each question (folded), the story (docs/ui-onescreen-spec.md 5.7)
+  resultNav = { pages: 3 };
+  resultPage = Math.min(resultPage, 2);
+  const tile = (big, small) => h('div', { class: 'result-tile' }, h('strong', {}, big), h('span', { class: 'muted small' }, small));
+  const summary = () => h('div', { class: 'result-tiles' },
+    tile(`${r.correct} / ${r.total}`, '정답'),
+    r.proofTotal ? tile(`${r.proved} / ${r.proofTotal}`, '근거까지 맞힌 문항') : null,
+    r.statements?.total ? tile(`${r.statements.matched} / ${r.statements.total}`, `진술 판정 일치${r.statements.judged < r.statements.total ? ` (판정 ${r.statements.judged})` : ''}`) : null,
+    r.stats ? tile(`${r.stats.clues} / ${r.stats.clueTotal}`, '모은 단서') : null,
+    r.stats?.minutes ? tile(`${r.stats.minutes}분`, '걸린 시간') : null,
+    r.stats ? tile(`${r.stats.hints ?? 0}번`, `힌트 · 난이도 ${DIFFICULTY[r.stats.difficulty]?.name ?? '입문'}`) : null);
+  const perQuestion = () => drawerGroup(r.questions.map((x, i) => ({
+    id: x.id,
+    title: `${i + 1}번 ${x.correct ? '✓' : '✗'}${x.evidence ? ` 근거 ${x.evidence.proved ? '✓' : '✗'}` : ''}`,
+    summary: x.prompt,
+    body: () => [
       h('strong', { class: 'result-row__head' }, mark(x.correct), x.prompt),
       h('div', {}, `${solo() ? '내 답' : '우리 답'}: ${label(x.id, x.chosen)}`),
       x.correct ? null : h('div', {}, `정답: ${label(x.id, x.answer)}`),
@@ -1507,11 +1587,32 @@ function resultView() {
       x.evidence ? h('div', { class: 'result-proof' }, mark(x.evidence.proved),
         `근거: ${x.evidence.chosen.map((c) => c.name).join(', ') || '-'}`,
         x.evidence.proved ? null : h('span', { class: 'muted' }, ` · 인정되는 근거: ${x.evidence.accepted.map((c) => c.name).join(', ')}`)) : null,
-      x.explanation ? h('div', { class: 'muted' }, x.explanation) : null)),
-    h('h3', {}, '해설'),
+      x.explanation ? h('p', { class: 'muted' }, x.explanation) : null,
+    ],
+  })), { open: r.questions.find((x) => !x.correct)?.id ?? null, remember: `${state.room.code}:result` });
+  const story = () => h('div', { class: 'stack' },
     h('p', { class: 'pre' }, r.explanation),
+    h('button', { type: 'button', class: 'px', onclick: playEnding }, '엔딩 다시 보기'));
+  return h('div', { class: 'sheet result-sheet' },
+    h('div', { class: 'row wrap' }, h('span', { class: 'tag tag--brass' }, '수사 종료'), h('h2', { class: 'score' }, `${r.correct} / ${r.total} 정답`)),
+    pageStrip(['요약', '문항별', '해설'], resultPage, (i) => goResultPage(i), { marks: [] }),
+    [summary, perQuestion, story][resultPage](),
   );
 }
+
+let resultPage = 0;
+let resultNav = null;
+function goResultPage(i) {
+  if (!resultNav) return false;
+  const next = Math.max(0, Math.min(resultNav.pages - 1, i));
+  if (next === resultPage) return false;
+  resultPage = next;
+  render();
+  document.querySelector('.scene-col')?.scrollTo?.({ top: 0 });
+  return true;
+}
+// the arrow keys turn whichever pages the stage shows
+onPageKeys((d) => (state?.room.stage === 'final' ? goFinalPage(finalPage + d) : state?.room.stage === 'result' ? goResultPage(resultPage + d) : false));
 
 // ---------- side tabs ----------
 
@@ -2050,7 +2151,7 @@ function renderChat(box = $('chatBox')) {
 
 function renderActionbar() {
   const s = state;
-  renderInto($('actionbar'), JSON.stringify([s.room, s.players, s.me.isHost, s.case?.id]), actionItems);
+  renderInto($('actionbar'), JSON.stringify([s.room, s.players, s.me.isHost, s.case?.id, s.final?.draft, finalPage, resultPage, finalNav?.blocked, Boolean(finalNav?.submit)]), actionItems);
 }
 
 function actionItems() {
@@ -2080,7 +2181,23 @@ function actionItems() {
       items.push(h('button', { class: 'primary', onclick: () => advance() }, `다음: ${next}${next.endsWith('리') ? '로' : '으로'}`));
       items.push(h('span', { class: 'muted', 'aria-live': 'polite' }, s.room.settings.solo ? '혼자 하는 방이에요. 준비되면 다음 단계로 넘어가세요.' : `동료 준비 ${ready}/${others.length} (연결된 참가자 기준)`));
     }
-    if (stage === 'result') items.push(h('a', { class: 'button primary', href: '#' }, '처음 화면으로'));
+    // the final deduction and the result turn pages from the dock
+    if (stage === 'final' && finalNav && !s.final.submitted) {
+      const f = s.final;
+      const done = f.questions.filter((q) => f.draft.answers[q.id]).length;
+      const last = finalPage >= finalNav.pages - 1;
+      items.push(h('span', { class: 'muted' }, `${f.questions.length}문항 중 ${done} 답함${finalNav.blocked ? ` · ${finalNav.blocked}` : ''}`));
+      items.push(h('button', { type: 'button', disabled: finalPage === 0, onclick: () => goFinalPage(finalPage - 1) }, '이전'));
+      if (!last) items.push(h('button', { type: 'button', class: 'primary', onclick: () => goFinalPage(finalPage + 1) }, finalPage === finalNav.pages - 2 ? '확인으로' : '다음'));
+      else if (s.me.isHost) items.push(h('button', { type: 'button', class: 'primary', disabled: !finalNav.submit, onclick: () => finalNav.submit?.() }, '최종 제출'));
+    }
+    if (stage === 'result') {
+      if (resultNav) {
+        items.push(h('button', { type: 'button', disabled: resultPage === 0, onclick: () => goResultPage(resultPage - 1) }, '이전'));
+        if (resultPage < resultNav.pages - 1) items.push(h('button', { type: 'button', onclick: () => goResultPage(resultPage + 1) }, '다음'));
+      }
+      items.push(h('a', { class: 'button primary', href: '#' }, '처음 화면으로'));
+    }
     return items;
   }
 }
@@ -2124,10 +2241,10 @@ let held = null;
 let lastLockToast = 0;
 
 // Own steps are drawn at once when the next tile is plainly walkable (floor, no exit, no solid
-// object); the server confirms them in order. Up to two steps run ahead of its answers, so walking
+// object); the server confirms them in order. Up to four steps run ahead of its answers, so walking
 // does not wait on the network. Exits and anything doubtful wait for the server.
 const FACE = { up: 'n', down: 's', left: 'w', right: 'e' };
-const MAX_AHEAD = 2;
+const MAX_AHEAD = 4;
 let ahead = 0;
 let predicted = null; // { location, x, y, facing } while steps are unconfirmed
 // The newest place the server has put us, with the room version it was true at. Full views, step
@@ -2261,31 +2378,56 @@ function step() {
   const drawn = predictStep(dir);
   // a step we could not draw (exit, wall, object) goes alone, after the ones in flight
   if (!drawn && ahead > 0) return;
-  const target = drawn ? { ...predicted } : null; // where this step puts us once the server agrees
   ahead += 1;
+  queued.push({ dir, drawn, target: drawn ? { ...predicted } : null }); // target: where the server will agree we are
+  sendSteps();
+}
+
+// Steps go out as soon as nothing is in flight; the ones drawn while waiting go together in one
+// request (move.dirs), so walking keeps pace on a slow line instead of waiting a round trip a tile.
+const STEP_BATCH = 6;
+let queued = [];
+let stepsInFlight = false;
+function sendSteps() {
+  if (stepsInFlight || !queued.length) return;
+  // a door or anything doubtful goes alone; drawn steps go together
+  const n = queued[0].drawn ? queued.findIndex((s) => !s.drawn) : 1;
+  const batch = queued.splice(0, Math.min(n < 0 ? queued.length : n, STEP_BATCH));
+  stepsInFlight = true;
   moveChain = moveChain.then(async () => {
-    const res = await conn.act('move', { dir });
-    ahead -= 1;
-    const confirmed = res.status === 200 && (res.body.moved || !drawn);
-    if (confirmed && target && res.body.moved && typeof res.body.stateVersion === 'number') noteServerMe(target, res.body.stateVersion);
-    if (res.status === 200 && res.body.reason === 'got_up' && res.body.message) toast(res.body.message, 'info');
-    if (res.status === 200 && res.body.noise) noiseMarks.push({ x: myMapEntry()?.x, y: myMapEntry()?.y, at: performance.now(), kind: res.body.noise });
-    if (res.status === 200 && res.body.reason === 'locked' && Date.now() - lastLockToast > 1500) {
+    const body = batch.length === 1 ? { dir: batch[0].dir } : { dirs: batch.map((s) => s.dir) };
+    const res = await conn.act('move', body);
+    stepsInFlight = false;
+    ahead -= batch.length;
+    const ok = res.status === 200;
+    const results = ok ? (res.body.results ?? [res.body]) : [];
+    const done = ok ? (batch.length === 1 ? (res.body.moved || !batch[0].drawn ? 1 : 0) : res.body.steps) : 0;
+    // where the server says we are now (and the steps that got us there)
+    if (ok && res.body.at && typeof res.body.stateVersion === 'number') noteServerMe(res.body.at, res.body.stateVersion);
+    results.forEach((r, i) => {
+      if (r.noise && batch[i]?.target) noiseMarks.push({ x: batch[i].target.x, y: batch[i].target.y, at: performance.now(), kind: r.noise });
+    });
+    if (ok && res.body.reason === 'got_up' && res.body.message) toast(res.body.message, 'info');
+    if (ok && res.body.reason === 'locked' && Date.now() - lastLockToast > 1500) {
       lastLockToast = Date.now();
       toast(res.body.message, 'error');
-    } else if (res.status !== 200 && res.status !== 429) {
+    } else if (!ok && res.status !== 429) {
       toast(errorText(res), 'error');
     }
-    // a refused step: go back to where the server has us and drop the rest of the guess (and any walk)
-    if (!confirmed) route = null;
-    if (!confirmed && serverMe) {
+    // a step that did not go through: back to where the server has us, and drop the rest of the
+    // guess (queued steps were drawn on top of it) and any walk
+    if (done < batch.length) {
+      route = null;
+      ahead -= queued.length;
+      queued = [];
       const me = myMapEntry();
-      if (me && serverMe.location === state.map.id) Object.assign(me, { x: serverMe.x, y: serverMe.y });
+      if (me && serverMe && serverMe.location === state.map.id) Object.assign(me, { x: serverMe.x, y: serverMe.y, facing: serverMe.facing });
       predicted = null;
       syncMotion();
     }
     if (ahead === 0) predicted = null;
     renderMapHud();
+    sendSteps();
   });
 }
 setInterval(step, 140);

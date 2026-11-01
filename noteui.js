@@ -90,12 +90,38 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
     onToast(toast.dataset.id);
   } }, toastFace, h('span', { class: 'ig-toast__text' }, h('span', { class: 'ig-toast__head' }, '인물 기록에 추가됨'), toastName));
   let toastTimer = null;
-  // the top-left column: date plate, today's goals, and whatever the game adds below (the minimap)
+  // the top-left column: date plate, today's goals, and whatever the game adds below (the minimap).
+  // It folds to the date plate alone (with the goal count on it), so the map gets the whole width
+  // (docs/ui-onescreen-spec.md 5.4); folded is the default, and the choice is kept in this browser.
+  const foldGoal = h('span', { class: 'nui-fold__goal' });
+  const foldBtn = h('button', { type: 'button', class: 'px nui-fold', 'aria-controls': 'nuiCornerMore', onclick: () => setFold(!folded) },
+    foldGoal, h('span', { class: 'nui-fold__arrow', 'aria-hidden': 'true' }));
   const corner = h('div', { class: 'nui-corner' },
     h('section', { class: 'px drop nui-date', 'aria-label': '진행 날짜' },
       h('div', { class: 'nui-date__day' }, h('small', {}, 'DAY'), dayNum),
-      h('div', { class: 'nui-date__info' }, h('div', { class: 'nui-date__row' }, phase, loc), days)),
+      h('div', { class: 'nui-date__info' }, h('div', { class: 'nui-date__row' }, phase, loc), days),
+      foldBtn),
     goalBox);
+  let folded = true;
+  try {
+    folded = localStorage.getItem('mystery:hud-fold') !== '0';
+  } catch {
+    // storage unavailable: folded
+  }
+  function setFold(on) {
+    folded = on;
+    corner.classList.toggle('is-folded', on);
+    foldBtn.setAttribute('aria-expanded', on ? 'false' : 'true');
+    foldBtn.setAttribute('aria-label', on ? '목표와 지도 펼치기' : '목표와 지도 접기');
+    foldBtn.querySelector('.nui-fold__arrow').textContent = on ? '▸' : '◂';
+    try {
+      localStorage.setItem('mystery:hud-fold', on ? '1' : '0');
+    } catch {
+      // ignore
+    }
+    onChange(openId);
+  }
+  setFold(folded);
   root.replaceChildren(world, bubble, h('div', { class: 'nui-layer' },
     corner,
     prompt,
@@ -167,6 +193,7 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
   // g: { done, total, next } or null when the case has no goals for today
   function setGoal(g) {
     goalBox.hidden = !g?.total;
+    foldGoal.textContent = g?.total ? `목표 ${g.done}/${g.total}` : '';
     if (!g?.total) return;
     goalCount.textContent = `${g.done}/${g.total}`;
     goalText.textContent = g.next ?? '오늘 목표를 모두 마쳤어요. 날을 넘길 수 있어요.';

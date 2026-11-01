@@ -582,3 +582,12 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui-security__boxes i { width: 14px; height: 14px; background: var(--paper, #F3E9D2); box-shadow: inset 0 0 0 3px var(--n-ink, #2A2622); }
 .nui-security__boxes i.is-on { background: #D4524A; }
 .nui-security__note { opacity: 0.7; }
+
+/* the corner folds to the date plate (docs/ui-onescreen-spec.md 5.4): goals, minimap and warnings
+   wait behind the fold button, which keeps today's goal count in view */
+.nui .nui-fold { display: flex; align-items: center; gap: 6px; align-self: stretch; margin: 0; padding: 0 12px; border-left: 3px solid var(--n-ink); background: transparent; box-shadow: none; font-family: var(--font-body); font-size: var(--fs-label); color: var(--n-ink); cursor: pointer; min-width: 44px; }
+.nui .nui-fold:hover { background: rgba(0, 0, 0, 0.06); }
+.nui .nui-fold__goal:empty { display: none; }
+.nui .nui-fold__goal { white-space: nowrap; }
+.nui-corner:not(.is-folded) .nui-fold__goal { display: none; }
+.nui-corner.is-folded > :not(.nui-date) { display: none !important; }

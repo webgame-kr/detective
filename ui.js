@@ -114,3 +114,107 @@ export function stepIndicator(stage, day) {
   const note = stage === 'intro' ? '사건 소개 · 1일 차 낮이 곧 시작돼요' : stage === 'final' ? '5일간의 수사 끝 · 최종 추리 중' : stage === 'result' ? '수사 종료 · 결과 확인' : null;
   return [h('ol', { class: 'stepper', 'aria-label': '수사 진행 단계' }, ...items), note ? h('p', { class: 'stepper-note' }, note) : null];
 }
+
+// ---------- one-screen pieces (docs/ui-onescreen-spec.md 4절) ----------
+
+// A stack of drawers: each has a name line (with a short summary of what is inside) that opens it.
+// One open at a time; pressing the open one closes it. With `remember`, the open drawer is kept in
+// sessionStorage under that key (a room code), so it stays open across redraws and reloads.
+// items: [{ id, title, summary?, body: () => node | [nodes] }]; open: the id open at first.
+export function drawerGroup(items, { open = null, remember = null, onToggle = null } = {}) {
+  const key = remember ? `mystery:drawer:${remember}` : null;
+  let current = open;
+  try {
+    const saved = key ? sessionStorage.getItem(key) : null;
+    if (saved !== null) current = saved || null;
+  } catch {
+    // storage unavailable: start from `open`
+  }
+  if (!items.some((it) => it.id === current)) current = items.some((it) => it.id === open) ? open : null;
+  const group = h('div', { class: 'drawers' });
+  const draw = () => {
+    group.replaceChildren(...items.map((it) => {
+      const isOpen = it.id === current;
+      const body = isOpen ? h('div', { class: 'drawer__body', id: `drawer-${it.id}` }, ...[it.body()].flat().filter(Boolean)) : null;
+      return h('section', { class: `drawer${isOpen ? ' is-open' : ''}`, 'data-drawer': it.id },
+        h('button', { type: 'button', class: 'drawer__head', 'aria-expanded': isOpen ? 'true' : 'false', 'aria-controls': `drawer-${it.id}`, onclick: () => {
+          current = isOpen ? null : it.id;
+          try {
+            if (key) sessionStorage.setItem(key, current ?? '');
+          } catch {
+            // ignore
+          }
+          draw();
+          onToggle?.(current);
+        } },
+          h('span', { class: 'drawer__title' }, it.title),
+          it.summary ? h('span', { class: 'drawer__summary' }, it.summary) : null,
+          h('span', { class: 'drawer__arrow', 'aria-hidden': 'true' }, isOpen ? '▾' : '▸')),
+        body);
+    }));
+  };
+  draw();
+  return group;
+}
+
+// Numbered pages along the top (like the day steps): one page shown at a time. marks[i] says
+// whether page i is done (a check, not only a color). Left and right arrow keys turn pages while
+// nothing is being typed.
+export function pageStrip(labels, index, onChange, { marks = [], flags = [] } = {}) {
+  return h('nav', { class: 'pager', 'aria-label': '장 넘김' },
+    ...labels.map((label, i) => h('button', {
+      type: 'button',
+      class: `pager__tab${i === index ? ' is-current' : ''}${marks[i] ? ' is-done' : ''}`,
+      'aria-current': i === index ? 'page' : null,
+      'aria-label': `${label}${marks[i] ? ' (답함)' : ''}${flags[i] ? ' (의견이 갈림)' : ''}`,
+      onclick: () => onChange(i),
+    }, marks[i] ? `${label}✓` : label, flags[i] ? h('span', { class: 'pager__flag', 'aria-hidden': 'true' }, '!') : null)));
+}
+
+let pageKeys = null;
+// one listener for the arrows; the screen that shows pages sets what they do
+export function onPageKeys(handler) {
+  pageKeys = handler;
+  if (onPageKeys.bound) return;
+  onPageKeys.bound = true;
+  document.addEventListener('keydown', (e) => {
+    if (!pageKeys || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (document.querySelector('#modal:not([hidden])')) return;
+    if (e.key === 'ArrowLeft' && pageKeys(-1)) e.preventDefault();
+    if (e.key === 'ArrowRight' && pageKeys(1)) e.preventDefault();
+  });
+}
+
+// Drawers already in the page (the home screen's forms keep their ids): sections with
+// .drawer__head buttons and .drawer__body parts. Same rules as drawerGroup: one open at a time,
+// remembered under `remember`. Returns open(id) to open one from outside (after picking a case).
+export function staticDrawers(container, { open = null, remember = null } = {}) {
+  const key = remember ? `mystery:drawer:${remember}` : null;
+  const parts = [...container.querySelectorAll(':scope > .drawer')];
+  let current = open;
+  try {
+    const saved = key ? sessionStorage.getItem(key) : null;
+    if (saved !== null) current = saved || null;
+  } catch {
+    // storage unavailable
+  }
+  const set = (id) => {
+    current = id;
+    for (const d of parts) {
+      const on = d.dataset.drawer === id;
+      d.classList.toggle('is-open', on);
+      d.querySelector(':scope > .drawer__head').setAttribute('aria-expanded', on ? 'true' : 'false');
+      d.querySelector(':scope > .drawer__head .drawer__arrow').textContent = on ? '▾' : '▸';
+      d.querySelector(':scope > .drawer__body').hidden = !on;
+    }
+    try {
+      if (key) sessionStorage.setItem(key, id ?? '');
+    } catch {
+      // ignore
+    }
+  };
+  for (const d of parts) d.querySelector(':scope > .drawer__head').addEventListener('click', () => set(current === d.dataset.drawer ? null : d.dataset.drawer));
+  set(parts.some((d) => d.dataset.drawer === current) ? current : null);
+  return { open: set };
+}

@@ -25,7 +25,8 @@ const CHAT_MAX = 200;
 const CHAT_KEEP = 200;
 const CHAT_BURST = 5; // messages per CHAT_WINDOW_MS
 const CHAT_WINDOW_MS = 10_000;
-const STEP_BURST = 3;
+// a batch of steps drawn while waiting on a slow line may arrive together (actions.js move.dirs)
+const STEP_BURST = 6;
 const HEARTBEAT_MS = 15_000;
 const LONG_POLL_MS = 20_000;
 const COLORS = ['#e4572e', '#2e86ab', '#5c9e31', '#d99a1e', '#9c51b6', '#17a2a0', '#d6336c', '#8d6e63', '#3f51b5', '#7cb342', '#ff7043', '#607d8b', '#c2185b', '#00897b', '#6d4c41', '#5e35b1'];
@@ -2507,56 +2508,93 @@ function requireBaseRev(note, baseRev) {
   }
 }
 
+// One step of a move: the facing turns even when the step is refused.
+const MAX_BATCH = 6;
+function stepOnce(g, pid, dir, rt) {
+  const d = own(DIRS, dir);
+  if (!d) throw new AppError(400, 'bad_dir', '이동 방향이 올바르지 않아요.');
+  if (!rt.allowStep()) throw new AppError(429, 'too_fast', '너무 빠르게 움직이고 있어요.');
+  const p = g.room.players[pid];
+  // the first step out of a hiding place or a chair only gets up
+  if (p.hiddenIn || p.seatedAt) {
+    const leaving = g.ix.objects.get(p.hiddenIn ?? p.seatedAt);
+    Object.assign(p, { hiddenIn: null, seatedAt: null });
+    g.changed();
+    return { moved: false, reason: 'got_up', message: leaving?.exitText ?? null };
+  }
+  // turning toward a wall still turns, so others see where the player faces
+  if (p.facing !== FACING[dir]) {
+    p.facing = FACING[dir];
+    g.out.positions = true;
+  }
+  const loc = g.ix.locations.get(p.location);
+  const nx = p.x + d[0];
+  const ny = p.y + d[1];
+  const exit = g.ix.exitAt.get(`${loc.id}:${nx}:${ny}`);
+  if (exit) {
+    if (!g.room.world.exits[exit.id].open) return { moved: false, reason: 'locked', message: exit.lockedMessage ?? '잠겨 있어요.' };
+    // an open door may still be only for some (pass), e.g. the guard room for whoever was brought there
+    if (exit.pass && !g.check(exit.pass, pid)) return { moved: false, reason: 'locked', message: exit.lockedMessage ?? '지금은 지나갈 수 없어요.' };
+    Object.assign(p, { location: exit.to.location, x: exit.to.x, y: exit.to.y, dialogue: null });
+    g.out.important = true;
+    g.out.worldChanged = true; // the room roster and both locations' player lists change
+    return { moved: true, location: p.location };
+  }
+  if (!isFloor(loc, nx, ny) || activeObjectAt(g, loc.id, nx, ny)) return { moved: false, reason: 'blocked' };
+  p.x = nx;
+  p.y = ny;
+  if (p.dialogue) {
+    p.dialogue = null;
+    g.out.important = true;
+  }
+  g.out.positions = true;
+  // a loud floor: wood carries 3 steps, metal as far as a guard can hear
+  const sound = loc.floor?.[ny]?.[nx];
+  if (sound === 'w' || sound === 'm') {
+    g.noiseAt(null, nx, ny, sound === 'w' ? 3 : 'hearing', loc.id);
+    return { moved: true, noise: sound };
+  }
+  return { moved: true };
+}
+
 const ACTIONS = {
   ...people.PEOPLE_ACTIONS,
 
+  // One step (dir), or several in order (dirs, up to MAX_BATCH): a client on a slow line sends the
+  // steps it has drawn while waiting together, so walking does not wait one round trip per tile.
+  // Guards and cameras look after every step, and the walk stops at the first step that does not
+  // go through or that someone else's rule ends (caught, taken somewhere, the day over).
   move: {
     stages: ['day'],
     run(g, pid, body, rt) {
-      const d = own(DIRS, body.dir);
-      if (!d) throw new AppError(400, 'bad_dir', '이동 방향이 올바르지 않아요.');
-      if (!rt.allowStep()) throw new AppError(429, 'too_fast', '너무 빠르게 움직이고 있어요.');
       const p = g.room.players[pid];
-      // the first step out of a hiding place or a chair only gets up
-      if (p.hiddenIn || p.seatedAt) {
-        const leaving = g.ix.objects.get(p.hiddenIn ?? p.seatedAt);
-        Object.assign(p, { hiddenIn: null, seatedAt: null });
-        g.changed();
-        return { moved: false, reason: 'got_up', message: leaving?.exitText ?? null };
+      const at = () => ({ location: p.location, x: p.x, y: p.y, facing: p.facing ?? 's' });
+      if (body.dirs === undefined) return { ...stepOnce(g, pid, body.dir, rt), at: at() };
+      if (!Array.isArray(body.dirs) || !body.dirs.length || body.dirs.length > MAX_BATCH || body.dirs.some((x) => !own(DIRS, x))) {
+        throw new AppError(400, 'bad_dir', '이동 방향이 올바르지 않아요.');
       }
-      // turning toward a wall still turns, so others see where the player faces
-      if (p.facing !== FACING[body.dir]) {
-        p.facing = FACING[body.dir];
-        g.out.positions = true;
+      const results = [];
+      for (const [i, dir] of body.dirs.entries()) {
+        if (i > 0) {
+          const before = at();
+          g.runAutomation();
+          const now = at();
+          if (g.room.stage !== 'day' || now.location !== before.location || now.x !== before.x || now.y !== before.y) break;
+        }
+        let r;
+        try {
+          r = stepOnce(g, pid, dir, rt);
+        } catch (err) {
+          if (i === 0 || err.code !== 'too_fast') throw err;
+          r = { moved: false, reason: 'too_fast' };
+        }
+        results.push(r);
+        // a door ends the batch too: the rest was drawn in the room we just left
+        if (!r.moved || r.location) break;
       }
-      const loc = g.ix.locations.get(p.location);
-      const nx = p.x + d[0];
-      const ny = p.y + d[1];
-      const exit = g.ix.exitAt.get(`${loc.id}:${nx}:${ny}`);
-      if (exit) {
-        if (!g.room.world.exits[exit.id].open) return { moved: false, reason: 'locked', message: exit.lockedMessage ?? '잠겨 있어요.' };
-        // an open door may still be only for some (pass), e.g. the guard room for whoever was brought there
-        if (exit.pass && !g.check(exit.pass, pid)) return { moved: false, reason: 'locked', message: exit.lockedMessage ?? '지금은 지나갈 수 없어요.' };
-        Object.assign(p, { location: exit.to.location, x: exit.to.x, y: exit.to.y, dialogue: null });
-        g.out.important = true;
-        g.out.worldChanged = true; // the room roster and both locations' player lists change
-        return { moved: true, location: p.location };
-      }
-      if (!isFloor(loc, nx, ny) || activeObjectAt(g, loc.id, nx, ny)) return { moved: false, reason: 'blocked' };
-      p.x = nx;
-      p.y = ny;
-      if (p.dialogue) {
-        p.dialogue = null;
-        g.out.important = true;
-      }
-      g.out.positions = true;
-      // a loud floor: wood carries 3 steps, metal as far as a guard can hear
-      const sound = loc.floor?.[ny]?.[nx];
-      if (sound === 'w' || sound === 'm') {
-        g.noiseAt(null, nx, ny, sound === 'w' ? 3 : 'hearing', loc.id);
-        return { moved: true, noise: sound };
-      }
-      return { moved: true };
+      const steps = results.filter((r) => r.moved).length;
+      const last = results.at(-1);
+      return { moved: steps > 0, steps, results, at: at(), ...(last.moved ? {} : { reason: last.reason, message: last.message ?? null }) };
     },
   },
 

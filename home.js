@@ -1,10 +1,19 @@
 import { api, seats, h } from './net.js';
-import { caseFolder, caseSheet, icon, playersText } from './ui.js';
+import { caseFolder, caseSheet, icon, playersText, staticDrawers, DIFFICULTY } from './ui.js';
 import { officeCard } from './casebook.js';
 
 const $ = (id) => document.getElementById(id);
 let cases = [];
 let chosen = null;
+
+// The right column: one drawer open at a time, '새 수사' first (docs/ui-onescreen-spec.md 5.1)
+const drawers = staticDrawers($('homeDrawers'), { open: 'new', remember: 'home' });
+staticDrawers($('settingsDrawers'));
+function settingsSummary() {
+  const d = DIFFICULTY[$('roomDifficulty').value]?.name ?? '입문';
+  $('settingsSummary').textContent = `${d} · ${$('roomCapacity').value || '-'}명 · 채팅 ${$('roomChat').checked ? '켬' : '끔'}`;
+}
+for (const id of ['roomDifficulty', 'roomCapacity', 'roomChat']) $(id).addEventListener('change', settingsSummary);
 
 function toast(text, kind = 'error') {
   const el = h('div', { class: `toast ${kind}` }, text);
@@ -33,9 +42,13 @@ function openCase(id, focus = false) {
   capacityHint();
   $('soloBox').hidden = !c.solo;
   $('createBtn').disabled = false;
+  $('newSummary').textContent = c.title;
+  settingsSummary();
   if (focus) {
     $('folders').querySelector('[aria-pressed="true"]')?.focus();
-    if (matchMedia('(max-width: 640px)').matches) $('caseSheet').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // picking a case leads straight to starting it
+    drawers.open('new');
+    if (matchMedia('(max-width: 640px)').matches) $('homeDrawers').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
 
@@ -183,9 +196,12 @@ async function removeRoom(code, list, info) {
   renderRecent();
 }
 
+let recentChecked = false;
 function renderRecent() {
   const recent = Object.entries(seats.all());
   $('recentCard').hidden = !recent.length;
+  $('recentSummary').textContent = recent.length ? `${recent.length}개` : '';
+  if (!recentChecked) return;
   $('recent').replaceChildren(...recent.map(([code, list]) => {
     const action = h('button', { type: 'button', class: 'small', disabled: true }, '확인 중…');
     const status = h('span', { class: 'muted small' }, list.map((s) => s.nickname).join(', '));
@@ -207,6 +223,12 @@ function renderRecent() {
   }));
 }
 renderRecent();
+// each saved room is a request (a link to a host browser in the Pages build): only when looked at
+$('recentCard').querySelector('.drawer__head').addEventListener('click', () => {
+  if (recentChecked) return;
+  recentChecked = true;
+  renderRecent();
+});
 
 $('emblem').append(icon('search'));
 for (const el of document.querySelectorAll('[data-icon]')) el.replaceWith(icon(el.dataset.icon));

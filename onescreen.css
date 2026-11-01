@@ -1,0 +1,155 @@
+/* One screen per stage (docs/ui-onescreen-spec.md). Loaded after outgame.css and uses only its
+   tokens and its pixel box, so the new parts read as the same paper and brass:
+   - the shell: off the map, the page is exactly the window; columns scroll inside, the action
+     bar (the dock) stays at the bottom
+   - drawers (ui.js drawerGroup), the page strip (ui.js pageStrip) and the docked action bar */
+
+/* ---------- the pixel box for the new parts ---------- */
+body.og:not(.field) :where(.drawer, .actionbar, .pager__tab) {
+  --c: var(--og-paper); --c-hi: var(--og-paper-hi); --c-lo: var(--og-paper-lo); --drop: 6px;
+  background: var(--c);
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 -3px 0 0 var(--og-ink), 0 3px 0 0 var(--og-ink), -3px 0 0 0 var(--og-ink), 3px 0 0 0 var(--og-ink),
+    inset 3px 3px 0 0 var(--c-hi), inset -3px -3px 0 0 var(--c-lo), var(--drop) var(--drop) 0 0 var(--og-shadow);
+}
+
+/* ---------- drawers ---------- */
+body.og:not(.field) .drawers { display: flex; flex-direction: column; gap: 15px; padding: 3px 9px 9px 3px; }
+body.og:not(.field) .drawer { position: relative; }
+body.og:not(.field) .drawer.is-open::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--og-brass); }
+body.og:not(.field) .drawer__head {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; margin: 0; padding: 6px 18px;
+  background: transparent; box-shadow: none; text-align: left; font-family: var(--og-label);
+}
+body.og:not(.field) .drawer__head:active:not(:disabled) { box-shadow: none; }
+body.og:not(.field) .drawer__title { font-weight: 700; font-size: 15px; white-space: nowrap; }
+body.og:not(.field) .drawer__summary { flex: 1; min-width: 0; font-size: 12px; color: var(--og-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.og:not(.field) .drawer__arrow { margin-left: auto; font-size: 12px; }
+body.og:not(.field) .drawer__body { padding: 3px 18px 18px; display: flex; flex-direction: column; gap: 12px; animation: drawer-open 0.12s steps(3, end); }
+body.og:not(.field) .drawer__body > :first-child { margin-top: 0; }
+@keyframes drawer-open { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- the docked action bar ---------- */
+body.og:not(.field) .actionbar {
+  --c: var(--og-brass-l); --c-hi: var(--og-brass-l-hi); --c-lo: var(--og-brass-l-lo);
+  position: sticky; bottom: 9px; z-index: 20; margin: 0 auto 9px; width: min(1312px, calc(100% - 24px));
+  display: flex; align-items: center; gap: 9px 15px; flex-wrap: wrap; min-height: 60px; padding: 6px 15px;
+  border-top: none; font-family: var(--og-body); font-size: 13px;
+}
+body.og:not(.field) .actionbar:empty { display: none; }
+body.og:not(.field) .actionbar .muted { margin-right: auto; order: -1; font-size: 13px; line-height: 20px; }
+/* the lobby and briefing used to repeat these buttons inside the goal box: the dock has them now */
+body.og:not(.field).callout-actions .actionbar { display: flex; }
+
+/* ---------- the page strip ---------- */
+body.og:not(.field) .pager { display: flex; flex-wrap: wrap; gap: 9px; padding: 3px 9px 9px 3px; }
+body.og:not(.field) .pager__tab { --drop: 3px; min-width: 48px; min-height: 44px; margin: 0; padding: 0 12px; font-family: var(--og-label); font-size: 13px; }
+body.og:not(.field) .pager__tab.is-done { --c: var(--og-teal-l); --c-hi: var(--og-teal-l-hi); --c-lo: var(--og-teal-l-lo); }
+body.og:not(.field) .pager__tab.is-current { --c: var(--og-brass); --c-hi: var(--og-brass-hi); --c-lo: var(--og-brass-lo); --drop: 6px; font-weight: 700; }
+body.og:not(.field) .pager__flag { margin-left: 4px; color: var(--og-crim-lo); font-weight: 700; }
+
+/* ---------- the shell: off the map, one window high ---------- */
+@media (min-width: 980px) {
+  body.game.og:not(.field) #app:not([hidden]) { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  body.game.og:not(.field) #app > .app-header { flex: none; }
+  body.game.og:not(.field) #app > .workarea { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; padding-top: 18px; padding-bottom: 12px; }
+  body.game.og:not(.field) #app > .workarea > #steps { flex: none; }
+  body.game.og:not(.field) .game-layout { flex: 1; min-height: 0; align-items: stretch; }
+  body.game.og:not(.field) .scene-col { min-height: 0; overflow: auto; padding: 3px 12px 12px 3px; overscroll-behavior: contain; }
+  body.game.og:not(.field) .side-col { position: static; top: auto; max-height: none; min-height: 0; display: flex; flex-direction: column; }
+  body.game.og:not(.field) .side-col .tab-body { flex: 1; min-height: 0; }
+  body.game.og:not(.field) #app > .actionbar { flex: none; position: static; }
+}
+/* narrower windows stack the columns: the page scrolls, the dock stays on screen */
+@media (max-width: 979px) {
+  body.game.og:not(.field) .actionbar { position: sticky; bottom: 0; margin-bottom: 0; width: 100%; }
+}
+@media (max-width: 640px) {
+  body.og:not(.field) .actionbar { min-height: 0; max-height: 64px; padding: 6px 9px; flex-wrap: nowrap; }
+  body.og:not(.field) .actionbar .muted { display: none; }
+  body.og:not(.field) .actionbar :is(button, .button) { flex: 1; min-height: 44px; }
+  body.og:not(.field) .trial-note { display: none; }
+}
+@media (max-height: 700px) and (min-width: 980px) {
+  body.game.og:not(.field) #app > .app-header { min-height: 52px; padding-top: 6px; padding-bottom: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.og:not(.field) .drawer__body { animation: none; }
+}
+
+/* ---------- lobby: the room on the left (always open), drawers on the right ---------- */
+body.og:not(.field)[data-stage='lobby'] .game-layout { grid-template-columns: minmax(0, 1fr); }
+body.og:not(.field)[data-stage='lobby'] .side-col { display: none; }
+body.og:not(.field)[data-stage='lobby'] .scene-col > #chatBox { display: none; }
+body.og:not(.field) .lobby-two { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 1fr); gap: 30px; align-items: start; }
+body.og:not(.field) .lobby-two > .lobby { margin: 0; }
+body.og:not(.field) .lobby-two .drawer .case-sheet.compact { --drop: 0px; }
+body.og:not(.field) .lobby-two .drawer .room-settings { --drop: 0px; padding: 0; background: transparent; box-shadow: none; }
+body.og:not(.field) .lobby-two .drawer .room-settings > h3 { display: none; }
+body.og:not(.field) .lobby-chat .chat { --drop: 0px; margin: 0; }
+@media (max-width: 979px) {
+  body.og:not(.field) .lobby-two { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- final deduction: one question a page ---------- */
+body.og:not(.field) .final-sheet, body.og:not(.field) .result-sheet { display: flex; flex-direction: column; gap: 15px; }
+body.og:not(.field) .final-sheet .question { margin: 0; }
+body.og:not(.field) .final-review { margin: 0; padding-left: 24px; display: flex; flex-direction: column; gap: 12px; }
+body.og:not(.field) .final-review li { line-height: 24px; }
+body.og:not(.field) button.linkish { --drop: 0px; min-height: 0; margin: 0; padding: 0; background: none; box-shadow: none; font-family: var(--og-label); font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+body.og:not(.field) .proof-card { display: inline-flex; align-items: center; gap: 6px; }
+body.og:not(.field) .proof-card__x { --drop: 0px; min-height: 28px; min-width: 28px; margin: 0; padding: 0 6px; font-size: 12px; }
+
+/* ---------- result: summary tiles ---------- */
+body.og:not(.field) .result-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; padding: 3px 9px 9px 3px; }
+body.og:not(.field) .result-tile {
+  --c: var(--og-paper2); --c-hi: var(--og-paper2-hi); --c-lo: var(--og-paper2-lo); --drop: 6px;
+  display: flex; flex-direction: column; gap: 3px; padding: 15px 18px; background: var(--c);
+  box-shadow: 0 -3px 0 0 var(--og-ink), 0 3px 0 0 var(--og-ink), -3px 0 0 0 var(--og-ink), 3px 0 0 0 var(--og-ink),
+    inset 3px 3px 0 0 var(--c-hi), inset -3px -3px 0 0 var(--c-lo), var(--drop) var(--drop) 0 0 var(--og-shadow);
+}
+body.og:not(.field) .result-tile strong { font-size: 24px; line-height: 30px; }
+
+/* ---------- home: case files · the open case · drawers, one window high ---------- */
+body.home.og .home-screen .desk { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(320px, 400px); gap: 30px; align-items: start; }
+body.home.og .home-screen #folders { display: flex; flex-direction: column; gap: 12px; padding: 3px 12px 12px 3px; }
+body.home.og .home-screen #folders > .folder { flex: none; }
+body.home.og .home-screen .drawers--inner { padding: 0; }
+body.home.og .home-screen .drawers--inner .drawer { --drop: 0px; --c: var(--og-paper2); --c-hi: var(--og-paper2-hi); --c-lo: var(--og-paper2-lo); }
+body.home.og .home-screen .drawer .office, body.home.og .home-screen .drawer .card { --drop: 0px; }
+body.home.og .home-screen #createBtn { margin-top: 6px; }
+@media (min-width: 980px) {
+  body.home.og { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  body.home.og > .app-header, body.home.og > .reference-line { flex: none; }
+  body.home.og > .home-screen { flex: 1; min-height: 0; width: 100%; padding-top: 24px; padding-bottom: 18px; display: flex; flex-direction: column; }
+  body.home.og .home-screen .desk { flex: 1; min-height: 0; align-items: stretch; }
+  body.home.og .home-screen .desk > * { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 3px 12px 12px 3px; }
+}
+@media (min-width: 980px) and (max-width: 1279px) {
+  body.home.og .home-screen .desk { gap: 18px; grid-template-columns: minmax(190px, 230px) minmax(0, 1fr) minmax(300px, 360px); }
+}
+@media (max-width: 979px) {
+  body.home.og .home-screen .desk { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  body.home.og .home-screen #folders { flex-direction: row; overflow-x: auto; padding-bottom: 12px; }
+  body.home.og .home-screen #folders .folder { flex: none; width: 200px; }
+}
+
+/* ---------- phones: same rules, one column ---------- */
+@media (max-width: 979px) {
+  /* home: pick a file, then the drawers to start it; the open case comes after */
+  body.home.og .home-screen .desk > #homeDrawers { order: 1; }
+  body.home.og .home-screen .desk > #caseSheet { order: 2; }
+}
+@media (max-width: 640px) {
+  body.home.og .home-screen #caseSheet .thumb { display: none; }
+  body.og:not(.field) .lobby-two .drawer .case-sheet .thumb { display: none; }
+  body.og:not(.field) .lobby-two .seats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  body.og:not(.field) .lobby-two .seat { min-height: 0; padding: 9px; }
+  body.og:not(.field) .lobby-two .seat .portrait { width: 48px; height: 48px; }
+  /* the briefing reads inside its card; the dock under it starts the day */
+  body.game.og:not(.field)[data-stage='intro'] .intro-sheet { max-height: calc(100dvh - 210px); overflow: auto; overscroll-behavior: contain; }
+  /* the notebook and the other tabs keep to half a screen, scrolling inside */
+  body.game.og:not(.field) .side-col .tab-body { max-height: 50dvh; overflow: auto; }
+  body.game.og:not(.field)[data-stage='intro'] .side-col { display: none; }
+}
