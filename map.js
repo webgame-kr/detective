@@ -46,7 +46,7 @@ export const GIMMICK_RENDERERS = {
 
   // A guard walking its route (shared/patrol.js gives the same place the server judges by), its
   // sight as pale yellow cells, and a "?" over it while it checks a noise.
-  guard_patrol(ctx, gm, { T, S, now, blocked, m, barks, reduce }) {
+  guard_patrol(ctx, gm, { T, S, now, blocked, m, barks, reduce, fronts }) {
     const P = window.Patrol;
     if (!P || !gm.active || gm.anchorAt == null) return;
     const state = { anchorAt: gm.anchorAt, offset: gm.offset, detour: gm.detour };
@@ -59,8 +59,11 @@ export const GIMMICK_RENDERERS = {
     seeCells(ctx, P.visionCells(cur, cur.facing, gm.vision, blocked, m.width, m.height), T, 'rgba(246, 216, 90, 0.28)');
     // the case's patrol sheet when it has one (and it has loaded), else a plain guard
     const sp = gm.sprite;
-    const drawn = sp && drawFrame(ctx, loadImage(sp.url), guardFrame(sp, cur, prev, now, reduce), sp.frameSize, sp.anchor, x + T / 2, y + T - 3 * S, S);
-    if (!drawn) plainGuard(ctx, x, y, T);
+    const drawn = drawBehind(ctx, fronts, S, Math.round(y / T), [x - T, y - 2 * T - 4 * S, 3 * T, 3 * T + 8 * S], (c) => {
+      const ok = sp && drawFrame(c, loadImage(sp.url), guardFrame(sp, cur, prev, now, reduce), sp.frameSize, sp.anchor, x + T / 2, y + T - 3 * S, S);
+      if (!ok) plainGuard(c, x, y, T);
+      return ok;
+    });
     if (cur.checking) {
       ctx.fillStyle = '#d4524a';
       ctx.font = `bold ${Math.round(T * 0.5)}px system-ui, sans-serif`;
@@ -87,6 +90,126 @@ export const GIMMICK_RENDERERS = {
     if (said) label(ctx, said.text, gm.x * T + T / 2, gm.y * T - 4, { font: '12px system-ui, sans-serif', bg: 'rgba(255,246,222,0.95)' });
   },
 };
+
+// Painted maps are drawn from the front and a little above, so a shelf's top rises into the floor row
+// behind it. People standing behind it must go under that part. For each wall tile with open floor
+// above, the pixels joined to it going up (at most one tile, until a floor color) are cut out into a
+// strip of their own, at the art's size. The floor colors are the common ones on open floor whose tile
+// below is open too. Kept per picture; a picture we may not read back gets none.
+const fronts = new Map();
+
+function frontLayers(img, m) {
+  if (!fronts.has(img.src)) {
+    let layers = [];
+    try {
+      layers = cutFronts(img, m);
+    } catch {
+      // unreadable picture: people are drawn over it as before
+    }
+    fronts.set(img.src, layers);
+  }
+  return fronts.get(img.src);
+}
+
+function cutFronts(img, m) {
+  const t = m.art.tile;
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(img, 0, 0);
+  const d = cx.getImageData(0, 0, w, h).data;
+  const wall = (x, y) => m.tiles[y]?.[x] === '#';
+  const open = (x, y) => y >= 0 && y < m.height && x >= 0 && x < m.width && !wall(x, y);
+  const color = (i) => (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+
+  const seen = new Map();
+  let total = 0;
+  for (let ty = 0; ty < m.height; ty++) {
+    for (let tx = 0; tx < m.width; tx++) {
+      if (!open(tx, ty) || !open(tx, ty + 1)) continue;
+      for (let y = ty * t; y < (ty + 1) * t; y++) {
+        for (let x = tx * t; x < (tx + 1) * t; x++) {
+          const k = color((y * w + x) * 4);
+          seen.set(k, (seen.get(k) ?? 0) + 1);
+          total++;
+        }
+      }
+    }
+  }
+  const floor = new Set([...seen].filter(([, n]) => n >= total * 0.004).map(([k]) => k));
+
+  const layers = [];
+  for (let ty = 1; ty < m.height; ty++) {
+    const top = (ty - 1) * t;
+    const strip = new ImageData(w, ty * t - top);
+    let any = false;
+    for (let tx = 0; tx < m.width; tx++) {
+      // the map's own edge walls hold doors and frames, not furniture
+      if (!wall(tx, ty) || !open(tx, ty - 1) || tx === 0 || tx === m.width - 1 || ty === m.height - 1) continue;
+      // how far the picture rises above this tile, column by column
+      const rise = [];
+      for (let x = tx * t; x < (tx + 1) * t; x++) {
+        let y = ty * t - 1;
+        while (y >= top && open(tx, Math.floor(y / t)) && d[(y * w + x) * 4 + 3] !== 0 && !floor.has(color((y * w + x) * 4))) y--;
+        // all the way up is a floor color we did not count, not a furniture top
+        rise.push(ty * t - 1 - y < t ? ty * t - 1 - y : 0);
+      }
+      // a wall's edge line or a doorframe is not furniture: most of the tile must rise
+      if (rise.filter((r) => r >= 2).length < t / 2) continue;
+      rise.forEach((r, k) => {
+        const x = tx * t + k;
+        for (let y = ty * t - r; y < ty * t; y++) strip.data.set(d.subarray((y * w + x) * 4, (y * w + x) * 4 + 4), ((y - top) * w + x) * 4);
+        if (r) any = true;
+      });
+    }
+    if (!any) continue;
+    const layer = document.createElement('canvas');
+    layer.width = w;
+    layer.height = strip.height;
+    layer.getContext('2d').putImageData(strip, 0, 0);
+    layers.push({ row: ty, y: top, canvas: layer });
+  }
+  return layers;
+}
+
+// Draws one person standing on tile row `row` (paint draws them in canvas pixels inside box
+// [x, y, w, h]) under the furniture fronts of rows further down. Most of the time none reaches
+// them and they are drawn straight onto the map.
+let scratch = null;
+function drawBehind(ctx, fronts, S, row, [x, y, w, h], paint) {
+  const over = fronts?.filter((f) => f.row > row && f.y * S < y + h && (f.y + f.canvas.height) * S > y);
+  if (!over?.length) return paint(ctx);
+  x = Math.floor(x);
+  y = Math.floor(y);
+  w = Math.ceil(w) + 1;
+  h = Math.ceil(h) + 1;
+  scratch ??= document.createElement('canvas');
+  if (scratch.width < w || scratch.height < h) {
+    scratch.width = Math.max(scratch.width, w);
+    scratch.height = Math.max(scratch.height, h);
+  }
+  const sc = scratch.getContext('2d');
+  sc.setTransform(1, 0, 0, 1, 0, 0);
+  sc.globalCompositeOperation = 'source-over';
+  sc.clearRect(0, 0, w, h);
+  sc.imageSmoothingEnabled = false;
+  sc.translate(-x, -y);
+  sc.globalAlpha = ctx.globalAlpha;
+  const drawn = paint(sc);
+  sc.globalAlpha = 1;
+  sc.globalCompositeOperation = 'destination-out';
+  for (const f of over) sc.drawImage(f.canvas, 0, f.y * S, f.canvas.width * S, f.canvas.height * S);
+  sc.setTransform(1, 0, 0, 1, 0, 0);
+  sc.globalCompositeOperation = 'source-over';
+  const alpha = ctx.globalAlpha;
+  ctx.globalAlpha = 1;
+  ctx.drawImage(scratch, 0, 0, w, h, x, y, w, h);
+  ctx.globalAlpha = alpha;
+  return drawn;
+}
 
 // a plain guard: cap, face, navy coat, torch beam toward where it looks
 function plainGuard(ctx, x, y, T) {
@@ -228,7 +351,10 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
   const occupied = (x, y) => here.some((p) => p.x === x && p.y === y && p.info.connected);
   drawFloor(ctx, m, T);
   const blocked = sightBlocker(m);
-  for (const gm of m.gimmicks) GIMMICK_RENDERERS[gm.renderer]?.(ctx, gm, { occupied, T, S, art: Boolean(art), now: serverNow, blocked, m, barks, reduce });
+  // painted furniture that people behind it are drawn under (see cutFronts)
+  const fronts = bg?.complete && bg.naturalWidth ? frontLayers(bg, m) : null;
+  const box = (fx, fy) => [fx - T, fy - 3 * T, 2 * T, 3 * T + 4 * S];
+  for (const gm of m.gimmicks) GIMMICK_RENDERERS[gm.renderer]?.(ctx, gm, { occupied, T, S, art: Boolean(art), now: serverNow, blocked, m, barks, reduce, fronts });
 
   const foot = (x, y) => [x * T + T / 2, y * T + T - 3 * S];
   for (const o of m.objects) {
@@ -237,7 +363,7 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
     ctx.fillStyle = o.color ?? '#888';
     const sp = o.sprite;
     // NPCs with art: idle loop, or the talk loop while their line is being printed
-    if (sp && drawFrame(ctx, loadImage(sp.url), frameAt(sp.animations[o.id === talkingId && sp.animations.talk ? 'talk' : 'idle'], now), sp.frameSize, sp.anchor, ...foot(o.x, o.y), S)) {
+    if (sp && drawBehind(ctx, fronts, S, o.y, box(...foot(o.x, o.y)), (c) => drawFrame(c, loadImage(sp.url), frameAt(sp.animations[o.id === talkingId && sp.animations.talk ? 'talk' : 'idle'], now), sp.frameSize, sp.anchor, ...foot(o.x, o.y), S))) {
       // drawn
     } else if (o.kind === 'talk') {
       ctx.beginPath();
@@ -299,25 +425,27 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
     // someone hidden shows as a faint outline (to the team; guards and cameras do not see them)
     ctx.globalAlpha = p.hidden ? 0.35 : p.info.connected ? 1 : 0.4;
     const [fx, fy] = foot(p.rx, p.ry);
-    // a colored ring at the feet keeps each player's color even when two share a look
-    ctx.fillStyle = p.info.color;
-    ctx.beginPath();
-    ctx.ellipse(fx, fy - 1, 4 * S + 7, 1.5 * S + 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    if (me) {
-      ctx.strokeStyle = '#1b1726';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-    const look = findLook(p.info.avatar);
-    const pose = look && lookFrame(look, { facing: p.mo?.facing ?? p.facing, moving: p.mo?.moving, action: p.mo?.action, actionT: p.mo?.actionT, now });
-    if (!look || !drawFrame(ctx, loadImage(`avatars/${look.image}`), pose, looks.frameSize, looks.anchor, fx, fy, S)) {
-      ctx.fillStyle = p.info.color;
-      ctx.fillRect(p.rx * T + 8, p.ry * T + 8, T - 16, T - 16);
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(p.rx * T + 13, p.ry * T + 15, 4, 4);
-      ctx.fillRect(p.rx * T + 23, p.ry * T + 15, 4, 4);
-    }
+    drawBehind(ctx, fronts, S, Math.round(p.ry), box(fx, fy), (c) => {
+      // a colored ring at the feet keeps each player's color even when two share a look
+      c.fillStyle = p.info.color;
+      c.beginPath();
+      c.ellipse(fx, fy - 1, 4 * S + 7, 1.5 * S + 2.5, 0, 0, Math.PI * 2);
+      c.fill();
+      if (me) {
+        c.strokeStyle = '#1b1726';
+        c.lineWidth = 2;
+        c.stroke();
+      }
+      const look = findLook(p.info.avatar);
+      const pose = look && lookFrame(look, { facing: p.mo?.facing ?? p.facing, moving: p.mo?.moving, action: p.mo?.action, actionT: p.mo?.actionT, now });
+      if (!look || !drawFrame(c, loadImage(`avatars/${look.image}`), pose, looks.frameSize, looks.anchor, fx, fy, S)) {
+        c.fillStyle = p.info.color;
+        c.fillRect(p.rx * T + 8, p.ry * T + 8, T - 16, T - 16);
+        c.fillStyle = '#fff';
+        c.fillRect(p.rx * T + 13, p.ry * T + 15, 4, 4);
+        c.fillRect(p.rx * T + 23, p.ry * T + 15, 4, 4);
+      }
+    });
     ctx.globalAlpha = 1;
   }
 
