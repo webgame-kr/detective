@@ -25,17 +25,49 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---------- a small note on the room page saying which side of the link this tab is ----------
-  function note(text) {
+  // The everyday ones ("this browser hosts the room", "linked") can be closed for good with ✕;
+  // a problem (the host gone, the broker out of reach) still shows after that.
+  const NOTE_OFF = 'mystery:p2p-note-off';
+  const noteOff = () => {
+    try {
+      return localStorage.getItem(NOTE_OFF) === '1';
+    } catch {
+      return false;
+    }
+  };
+  function note(text, { problem = false } = {}) {
     if (!pageCode) return;
     const show = () => {
       let el = document.getElementById('p2p-note');
+      if (!problem && noteOff()) {
+        el?.remove();
+        return;
+      }
       if (!el) {
         el = document.createElement('div');
         el.id = 'p2p-note';
-        el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:50;max-width:min(320px,calc(100vw - 16px));padding:4px 8px;background:rgba(42,38,34,.85);color:#F6D88A;font:11px/1.4 "Galmuri11","Malgun Gothic",sans-serif;pointer-events:none';
+        el.setAttribute('role', 'status');
+        el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:50;display:flex;align-items:flex-start;gap:6px;max-width:min(340px,calc(100vw - 16px));padding:4px 4px 4px 8px;background:rgba(42,38,34,.85);color:#F6D88A;font:11px/1.4 "Galmuri11","Malgun Gothic",sans-serif';
+        const t = document.createElement('span');
+        t.className = 'p2p-note__text';
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '✕';
+        x.setAttribute('aria-label', '이 안내 끄기');
+        x.title = '이 안내 끄기 (연결에 문제가 생기면 다시 보여요)';
+        x.style.cssText = 'flex:none;min-width:24px;min-height:24px;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer';
+        x.addEventListener('click', () => {
+          try {
+            localStorage.setItem(NOTE_OFF, '1');
+          } catch {
+            // ignore
+          }
+          el.remove();
+        });
+        el.append(t, x);
         document.body.append(el);
       }
-      el.textContent = text;
+      el.querySelector('.p2p-note__text').textContent = text;
     };
     if (document.body) show();
     else document.addEventListener('DOMContentLoaded', show);
@@ -162,7 +194,7 @@
         conn.on('close', () => {
           clearTimeout(timer);
           clearInterval(beat);
-          note('방장과 연결이 끊겼어요. 다시 연결하는 중이에요.');
+          note('방장과 연결이 끊겼어요. 다시 연결하는 중이에요.', { problem: true });
           links.delete(code);
           pending.forEach((h) => h.onClose());
           pending.clear();
@@ -187,7 +219,7 @@
     try {
       l = await link(code);
     } catch {
-      note('방장 브라우저에 연결하지 못했어요. 방장이 이 방 화면을 열어 두었는지 확인해 주세요.');
+      note('방장 브라우저에 연결하지 못했어요. 방장이 이 방 화면을 열어 두었는지 확인해 주세요.', { problem: true });
       throw failed();
     }
     note('방장 브라우저에 연결됐어요.');
@@ -248,7 +280,7 @@
         return 'local';
       }
       if (r === 'offline') {
-        note('연결 서버에 닿지 않아 다른 사람은 들어올 수 없어요. 혼자서는 계속할 수 있어요.');
+        note('연결 서버에 닿지 않아 다른 사람은 들어올 수 없어요. 혼자서는 계속할 수 있어요.', { problem: true });
         return 'local';
       }
       // taken: maybe this tab's own earlier life (a reload) has not let go yet

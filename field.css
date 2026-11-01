@@ -603,7 +603,7 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
   .nui-prompt { bottom: 12px; }
   body.field .toasts { top: 6px; right: 66px; }
   .nui .ig-toast { top: 6px; right: 66px; }
-  .nui .ig-dialog { bottom: 6px; right: 66px; left: 6px; padding: 36px 15px 48px; }
+  .nui .ig-dialog { bottom: 6px; right: 66px; left: 6px; width: auto; transform: none; padding: 30px 15px 42px; }
   .nui .ig-portrait { width: 72px; height: 72px; top: -48px; }
   .nui .ig-portrait .ig-face { transform: scale(0.4); }
   .nui .ig-name { left: 96px; }
@@ -617,3 +617,13 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 body.field .stage.is-follow .mapbox, body.field .stage.is-follow .map-wrap { justify-content: flex-start; }
 body.field .stage.is-follow .map-wrap { display: flex; }
 body.field .stage.is-follow .map-wrap canvas { max-width: none; max-height: none; flex: none; }
+
+/* phones: however many choices a line offers, the box stays on screen; the list scrolls inside */
+@media (max-width: 760px), (max-height: 520px) {
+  .nui .ig-dialog { max-width: calc(100vw - 12px); }
+  .ig-choices { max-height: 34vh; max-height: 34dvh; overflow-y: auto; overscroll-behavior: contain; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .ig-line { font-size: 14px; line-height: 22px; min-height: 44px; }
+  .ig-choices { gap: 9px; margin-top: 12px; }
+}
