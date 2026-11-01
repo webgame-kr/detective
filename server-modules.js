@@ -3445,7 +3445,10 @@ function gimmickView(g, gm) {
   const { room } = g;
   const mod = gimmicks.get(gm.type);
   const config = room.world.gimmickPatches?.[gm.id] ? { ...gm.config, ...room.world.gimmickPatches[gm.id] } : gm.config;
-  return { id: gm.id, type: gm.type, renderer: mod.clientRenderer, location: mod.location(gm.config), ...mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length }) };
+  const view = mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length });
+  // a guard drawn as its character walking the route, when the case gives that person a patrol sheet
+  if (view.character) view.sprite = spriteView(g.caseDef, view.character, 'patrolSprite');
+  return { id: gm.id, type: gm.type, renderer: mod.clientRenderer, location: mod.location(gm.config), ...view };
 }
 
 function mapView(g, me) {
@@ -3500,8 +3503,8 @@ function peopleView(g, me) {
   };
 }
 
-function spriteView(caseDef, characterId) {
-  const sprite = characterId ? caseDef.index.characters.get(characterId)?.sprite : null;
+function spriteView(caseDef, characterId, kind = 'sprite') {
+  const sprite = characterId ? caseDef.index.characters.get(characterId)?.[kind] : null;
   return sprite ? { ...sprite, url: assetUrl(caseDef, sprite.image) } : null;
 }
 
@@ -4334,32 +4337,38 @@ function validateCase(pkg) {
   });
   if (Array.isArray(pkg.gimmicks)) collectIds(pkg.gimmicks, 'gimmicks', '기믹', errors);
 
-  // characters: public intro (shown once met) and an optional sprite from the package's assets
-  (Array.isArray(pkg.characters) ? pkg.characters : []).forEach((c, i) => {
-    const p = `characters[${i}]`;
-    if (!checkObject(c, { id: f.any(), name: f.str(30), role: f.str(30), intro: f.str(300), sprite: f.any(true), portrait: f.any(true) }, p, ctx, errors)) return;
-    // portrait: one column of a sheet (still face on row 0, talking face on row 1), size×size each
-    if (c.portrait !== undefined && checkObject(c.portrait, { image: f.str(80), col: f.int(0, 63), size: f.int(8, 256, true) }, `${p}.portrait`, ctx, errors) && !assets.has(c.portrait.image)) {
-      errors.push(`${p}.portrait.image: assets에 없는 파일 '${c.portrait.image}'`);
-    }
-    if (c.sprite === undefined) return;
-    const sp = `${p}.sprite`;
-    if (!checkObject(c.sprite, { image: f.str(80), frameSize: f.any(), anchor: f.any(), animations: f.any() }, sp, ctx, errors)) return;
-    if (!assets.has(c.sprite.image)) errors.push(`${sp}.image: assets에 없는 파일 '${c.sprite.image}'`);
+  // characters: public intro (shown once met) and an optional sprite from the package's assets.
+  // patrolSprite: how the person looks walking a guard route (guard_patrol with this character)
+  const SPRITE_ANIMS = { idle: true, talk: false };
+  const PATROL_ANIMS = { walk_s: true, walk_n: true, walk_e: true, walk_w: true, look: false, flashlight: false, flashlight_sweep: false, alert: false, stop: false, escort: false };
+  const checkSprite = (sprite, sp, names) => {
+    if (!checkObject(sprite, { image: f.str(80), frameSize: f.any(), anchor: f.any(), animations: f.any() }, sp, ctx, errors)) return;
+    if (!assets.has(sprite.image)) errors.push(`${sp}.image: assets에 없는 파일 '${sprite.image}'`);
     const pair = (v, max) => Array.isArray(v) && v.length === 2 && v.every((n) => Number.isInteger(n) && n >= 0 && n <= max);
-    if (!pair(c.sprite.frameSize, 256) || c.sprite.frameSize.includes(0)) errors.push(`${sp}.frameSize: [가로, 세로] 1~256 정수여야 해요`);
-    if (!pair(c.sprite.anchor, 256)) errors.push(`${sp}.anchor: [x, y] 0~256 정수여야 해요`);
-    if (!isPlainObject(c.sprite.animations) || !c.sprite.animations.idle) {
-      errors.push(`${sp}.animations: idle이 있는 객체여야 해요`);
+    if (!pair(sprite.frameSize, 256) || sprite.frameSize.includes(0)) errors.push(`${sp}.frameSize: [가로, 세로] 1~256 정수여야 해요`);
+    if (!pair(sprite.anchor, 256)) errors.push(`${sp}.anchor: [x, y] 0~256 정수여야 해요`);
+    const needed = Object.keys(names).filter((n) => names[n]);
+    if (!isPlainObject(sprite.animations) || needed.some((n) => !sprite.animations[n])) {
+      errors.push(`${sp}.animations: ${needed.join(', ')}이(가) 있는 객체여야 해요`);
       return;
     }
-    for (const [name, anim] of Object.entries(c.sprite.animations)) {
+    for (const [name, anim] of Object.entries(sprite.animations)) {
       const ap = `${sp}.animations.${name}`;
-      if (!['idle', 'talk'].includes(name)) errors.push(`${ap}: idle, talk만 쓸 수 있어요`);
+      if (!(name in names)) errors.push(`${ap}: ${Object.keys(names).join(', ')}만 쓸 수 있어요`);
       if (!checkObject(anim, { loop: f.bool(), frames: f.any() }, ap, ctx, errors)) continue;
       if (!Array.isArray(anim.frames) || anim.frames.length < 1 || anim.frames.length > 64) errors.push(`${ap}.frames: 1~64개의 배열이어야 해요`);
       else anim.frames.forEach((fr, k) => checkObject(fr, { x: f.int(0, 4096), y: f.int(0, 4096), ms: f.int(16, 10000) }, `${ap}.frames[${k}]`, ctx, errors));
     }
+  };
+  (Array.isArray(pkg.characters) ? pkg.characters : []).forEach((c, i) => {
+    const p = `characters[${i}]`;
+    if (!checkObject(c, { id: f.any(), name: f.str(30), role: f.str(30), intro: f.str(300), sprite: f.any(true), patrolSprite: f.any(true), portrait: f.any(true) }, p, ctx, errors)) return;
+    // portrait: one column of a sheet (still face on row 0, talking face on row 1), size×size each
+    if (c.portrait !== undefined && checkObject(c.portrait, { image: f.str(80), col: f.int(0, 63), size: f.int(8, 256, true) }, `${p}.portrait`, ctx, errors) && !assets.has(c.portrait.image)) {
+      errors.push(`${p}.portrait.image: assets에 없는 파일 '${c.portrait.image}'`);
+    }
+    if (c.sprite !== undefined) checkSprite(c.sprite, `${p}.sprite`, SPRITE_ANIMS);
+    if (c.patrolSprite !== undefined) checkSprite(c.patrolSprite, `${p}.patrolSprite`, PATROL_ANIMS);
   });
 
   // final

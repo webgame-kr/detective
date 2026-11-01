@@ -46,7 +46,7 @@ export const GIMMICK_RENDERERS = {
 
   // A guard walking its route (shared/patrol.js gives the same place the server judges by), its
   // sight as pale yellow cells, and a "?" over it while it checks a noise.
-  guard_patrol(ctx, gm, { T, now, blocked, m, barks, reduce }) {
+  guard_patrol(ctx, gm, { T, S, now, blocked, m, barks, reduce }) {
     const P = window.Patrol;
     if (!P || !gm.active || gm.anchorAt == null) return;
     const state = { anchorAt: gm.anchorAt, offset: gm.offset, detour: gm.detour };
@@ -57,22 +57,15 @@ export const GIMMICK_RENDERERS = {
     const x = (prev.x + (cur.x - prev.x) * f) * T;
     const y = (prev.y + (cur.y - prev.y) * f) * T;
     seeCells(ctx, P.visionCells(cur, cur.facing, gm.vision, blocked, m.width, m.height), T, 'rgba(246, 216, 90, 0.28)');
-    // a plain guard: cap, face, navy coat, torch beam toward where it looks
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(x + T * 0.2, y + T * 0.85, T * 0.6, T * 0.12);
-    ctx.fillStyle = '#2b3a67';
-    ctx.fillRect(x + T * 0.25, y + T * 0.38, T * 0.5, T * 0.5);
-    ctx.fillStyle = '#efbc9c';
-    ctx.fillRect(x + T * 0.32, y + T * 0.12, T * 0.36, T * 0.28);
-    ctx.fillStyle = '#1b2240';
-    ctx.fillRect(x + T * 0.28, y + T * 0.06, T * 0.44, T * 0.12);
-    ctx.fillStyle = '#f6d88a';
-    ctx.fillRect(x + T * 0.44, y + T * 0.46, T * 0.12, T * 0.12);
+    // the case's patrol sheet when it has one (and it has loaded), else a plain guard
+    const sp = gm.sprite;
+    const drawn = sp && drawFrame(ctx, loadImage(sp.url), guardFrame(sp, cur, prev, now, reduce), sp.frameSize, sp.anchor, x + T / 2, y + T - 3 * S, S);
+    if (!drawn) plainGuard(ctx, x, y, T);
     if (cur.checking) {
       ctx.fillStyle = '#d4524a';
       ctx.font = `bold ${Math.round(T * 0.5)}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText('?', x + T / 2, y - T * 0.1);
+      ctx.fillText('?', x + T / 2, drawn ? y + T - 3 * S - (sp.anchor[1] + 2) * S : y - T * 0.1);
     }
     const said = barks?.filter((b) => b.gimmick === gm.id).at(-1);
     if (said) label(ctx, said.text, x + T / 2, y - T * 0.35, { font: '12px system-ui, sans-serif', bg: 'rgba(255,246,222,0.95)' });
@@ -94,6 +87,33 @@ export const GIMMICK_RENDERERS = {
     if (said) label(ctx, said.text, gm.x * T + T / 2, gm.y * T - 4, { font: '12px system-ui, sans-serif', bg: 'rgba(255,246,222,0.95)' });
   },
 };
+
+// a plain guard: cap, face, navy coat, torch beam toward where it looks
+function plainGuard(ctx, x, y, T) {
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x + T * 0.2, y + T * 0.85, T * 0.6, T * 0.12);
+  ctx.fillStyle = '#2b3a67';
+  ctx.fillRect(x + T * 0.25, y + T * 0.38, T * 0.5, T * 0.5);
+  ctx.fillStyle = '#efbc9c';
+  ctx.fillRect(x + T * 0.32, y + T * 0.12, T * 0.36, T * 0.28);
+  ctx.fillStyle = '#1b2240';
+  ctx.fillRect(x + T * 0.28, y + T * 0.06, T * 0.44, T * 0.12);
+  ctx.fillStyle = '#f6d88a';
+  ctx.fillRect(x + T * 0.44, y + T * 0.46, T * 0.12, T * 0.12);
+}
+
+// Which patrol frame shows: walking the way it steps, sweeping the torch while it checks a noise,
+// and standing still looking around (facing down) or turned toward where it looks.
+// Diagonal facings show as their side (e/w); reduced motion holds first frames.
+function guardFrame(sp, cur, prev, now, reduce) {
+  const a = sp.animations;
+  const side = (d) => (d.length > 1 ? d[1] : d);
+  const pick = (anim) => (reduce ? anim.frames[0] : frameAt(anim, now));
+  if (cur.x !== prev.x || cur.y !== prev.y) return pick(a[`walk_${side(cur.facing)}`]);
+  if (cur.checking && (a.flashlight_sweep ?? a.alert)) return pick(a.flashlight_sweep ?? a.alert);
+  if (cur.facing === 's' && a.look) return pick(a.look);
+  return a[`walk_${side(cur.facing)}`].frames[0];
+}
 
 function seeCells(ctx, cells, T, color) {
   ctx.fillStyle = color;
@@ -208,7 +228,7 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
   const occupied = (x, y) => here.some((p) => p.x === x && p.y === y && p.info.connected);
   drawFloor(ctx, m, T);
   const blocked = sightBlocker(m);
-  for (const gm of m.gimmicks) GIMMICK_RENDERERS[gm.renderer]?.(ctx, gm, { occupied, T, art: Boolean(art), now: serverNow, blocked, m, barks, reduce });
+  for (const gm of m.gimmicks) GIMMICK_RENDERERS[gm.renderer]?.(ctx, gm, { occupied, T, S, art: Boolean(art), now: serverNow, blocked, m, barks, reduce });
 
   const foot = (x, y) => [x * T + T / 2, y * T + T - 3 * S];
   for (const o of m.objects) {
