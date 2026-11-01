@@ -29,6 +29,7 @@
           <div class="drawer__body" id="dw-new">
             <form id="createForm" class="stack">
               <label class="field">내 닉네임<input id="createNick" maxlength="12" placeholder="최대 12자" autocomplete="off" required></label>
+              <label class="field">수사본부 이름<input id="roomName" maxlength="20" placeholder="닉네임의 수사본부" autocomplete="off"></label>
               <div id="soloBox" class="solo-box" hidden>
                 <button id="soloBtn" type="button" class="primary full">혼자 하기</button>
               </div>
@@ -37,7 +38,6 @@
                 <section class="drawer" data-drawer="settings">
                   <button type="button" class="drawer__head" aria-expanded="false" aria-controls="dw-settings"><span class="drawer__title">방 설정</span><span class="drawer__summary" id="settingsSummary"></span><span class="drawer__arrow" aria-hidden="true">▸</span></button>
                   <div class="drawer__body" id="dw-settings">
-                    <label class="field">방 이름<input id="roomName" maxlength="20" placeholder="닉네임의 수사본부" autocomplete="off"></label>
                     <label class="field">정원<select id="roomCapacity"></select></label>
                     <p class="muted small" id="capacityHint" aria-live="polite"></p>
                     <label class="field">난이도<select id="roomDifficulty"><option value="guide">입문 · 할 일과 힌트를 보여 줘요</option><option value="detective">탐정 · 목표를 질문으로만 보여 줘요</option><option value="master">명탐정 · 목표와 힌트 없이</option></select></label>

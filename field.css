@@ -591,3 +591,29 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui .nui-fold__goal { white-space: nowrap; }
 .nui-corner:not(.is-folded) .nui-fold__goal { display: none; }
 .nui-corner.is-folded > :not(.nui-date) { display: none !important; }
+
+/* ---------- phones held sideways (short and wide): the tabs stand along the right edge as a
+   slim icon column, so the map keeps the full height; the note opens beside it, the touch pad
+   and the E button sit in the bottom corners ---------- */
+@media (max-height: 520px) and (min-width: 600px) and (orientation: landscape) {
+  .nui-tabs { top: 6px; bottom: 6px; left: auto; right: 6px; width: 54px; flex-direction: column; justify-content: center; gap: 3px; padding: 0; background: transparent; }
+  .nui .nui-tab, .nui .nui-tab[aria-expanded='true'] { flex: 0 1 46px; width: 54px; height: auto; min-height: 36px; max-height: 46px; }
+  .nui-note { top: 6px; bottom: 6px; left: auto; right: 66px; width: min(62vw, 560px); padding: 24px 12px 12px 24px; }
+  .nui-note.nui-note--wide { top: 6px; bottom: 6px; left: 9px; right: 66px; width: auto; }
+  .nui-prompt { bottom: 12px; }
+  body.field .toasts { top: 6px; right: 66px; }
+  .nui .ig-toast { top: 6px; right: 66px; }
+  .nui .ig-dialog { bottom: 6px; right: 66px; left: 6px; padding: 36px 15px 48px; }
+  .nui .ig-portrait { width: 72px; height: 72px; top: -48px; }
+  .nui .ig-portrait .ig-face { transform: scale(0.4); }
+  .nui .ig-name { left: 96px; }
+  .touchpad .pad { left: 9px; bottom: 9px; width: 132px; height: 132px; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); }
+  .nui .pad__act { right: 72px; bottom: 15px; width: 60px; height: 60px; font-size: 22px; }
+  .nui-mini__map { width: 96px; height: 64px; }
+}
+
+/* the follow camera on tall screens (game.js followCamera): the map is wider than the screen and
+   slides under it, keeping the player in the middle */
+body.field .stage.is-follow .mapbox, body.field .stage.is-follow .map-wrap { justify-content: flex-start; }
+body.field .stage.is-follow .map-wrap { display: flex; }
+body.field .stage.is-follow .map-wrap canvas { max-width: none; max-height: none; flex: none; }

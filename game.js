@@ -281,7 +281,10 @@ function render() {
   // the first view sets the baselines: earlier clues and messages are not "new"
   if (seenClues === null) seenClues = loadSeen() ?? new Set(s.notebook?.clues.map((c) => c.id) ?? []);
   $('stageBadge').textContent = s.room.stageLabel;
-  $('codeBtn').textContent = `초대 코드 ${s.room.code}`;
+  if ($('codeBtn').dataset.code !== s.room.code) {
+    $('codeBtn').dataset.code = s.room.code;
+    $('codeBtn').replaceChildren(h('span', { class: 'code-label' }, '초대 코드 '), s.room.code); // phones show the code alone
+  }
   const banner = $('banner');
   const problem = s.room.broken?.message ?? s.room.caseError;
   banner.hidden = !problem;
@@ -967,6 +970,7 @@ function drawLoop() {
     const anchors = drawMap(canvas, state, { focusId: pickTarget(state, facing)?.id, now, motion: view, talkingId: dialogueBox.tw.done ? null : state.dialogue?.objectId, worldLabels: fieldMode(), news: hintsOn ? new Set(state.hints?.news ?? []) : null, serverNow: Date.now() + clockOffset, barks: (state.barks ?? []).filter((b) => Date.now() - b.at < 4000), reduce: reduceMotion });
     drawPings(canvas, now);
     drawNoise(canvas, performance.now());
+    followCamera(canvas, view);
     if (fieldMode()) placeWorld(canvas, anchors);
   }
   requestAnimationFrame(drawLoop);
@@ -1097,7 +1101,7 @@ function liveBubbles() {
 // measured then.
 let canvasBox = { key: null, r: null };
 function placeWorld(canvas, anchors) {
-  const key = `${canvas.dataset.fit}:${canvas.style.width}`;
+  const key = `${canvas.dataset.fit}:${canvas.style.width}:${canvas.style.transform}`;
   if (canvasBox.key !== key) canvasBox = { key, r: canvas.getBoundingClientRect() };
   const r = canvasBox.r;
   const k = r.width / canvas.width;
@@ -1132,7 +1136,9 @@ function fitCanvas(canvas) {
   const rail = fieldMode() ? document.querySelector('#hud .nui-tabs') : null;
   const side = rail && getComputedStyle(rail).flexDirection === 'column';
   const right = rail && side ? rail.offsetWidth + 9 : 0;
-  const bottom = rail && !side ? rail.offsetHeight : 0;
+  // upright with the touch pad showing, the map keeps above the pad
+  const pad = fieldMode() && !$('touchpad').hidden && innerHeight > innerWidth ? $('touchpad').querySelector('.pad').offsetHeight + 24 : 0;
+  const bottom = (rail && !side ? rail.offsetHeight : 0) + pad;
   // the date, goals and minimap column on the left too (unless folded to the date plate): the map
   // shrinks into the space between, as long as that space is still a usable width
   const corner = rail && side ? document.querySelector('#hud .nui-corner:not(.is-folded)') : null;
@@ -1142,10 +1148,40 @@ function fitCanvas(canvas) {
   if (canvas.dataset.fit === key) return;
   canvas.dataset.fit = key;
   Object.assign($('stage').style, { right: right ? `${right}px` : '', bottom: bottom ? `${bottom}px` : '', left: left ? `${left}px` : '' });
-  const room = Math.min((innerWidth - right - left) / canvas.width, (innerHeight - bottom) / canvas.height);
+  const availW = innerWidth - right - left;
+  const availH = innerHeight - bottom;
+  const fitW = availW / canvas.width;
+  const fitH = availH / canvas.height;
+  // A phone and a room much wider than the screen (a phone held upright, or a long train car held
+  // sideways): fitting the width would leave a thin strip.
+  // Zoom in to use the height instead (at most 2.5×) and let the camera follow the player across.
+  camera = fieldMode() && Math.min(innerWidth, innerHeight) <= 520 && fitH > fitW * 1.4 ? { zoom: Math.min(fitH * 0.92, fitW * 2.5), availW } : null;
+  $('stage').classList.toggle('is-follow', Boolean(camera));
+  canvas.style.transform = '';
+  if (camera) {
+    canvas.style.width = `${Math.round(canvas.width * camera.zoom)}px`;
+    canvas.style.height = `${Math.round(canvas.height * camera.zoom)}px`;
+    return;
+  }
+  const room = Math.min(fitW, fitH);
   const k = fieldMode() && room >= 1 ? Math.floor(room) : null;
   canvas.style.width = k ? `${canvas.width * k}px` : '';
   canvas.style.height = k ? `${canvas.height * k}px` : '';
+}
+
+// The follow camera (tall screens): the map slides so the player stays in the middle, never past
+// the map's edges.
+let camera = null;
+function followCamera(canvas, view) {
+  if (!camera) return;
+  const me = view.get(state.me.id);
+  if (!me) return;
+  const T = canvas.width / state.map.width;
+  const cssW = canvas.width * camera.zoom;
+  const x = (me.rx + 0.5) * T * camera.zoom;
+  const offset = Math.round(Math.max(camera.availW - cssW, Math.min(0, camera.availW / 2 - x)));
+  const t = `translateX(${offset}px)`;
+  if (canvas.style.transform !== t) canvas.style.transform = t;
 }
 
 function renderMapHud() {
@@ -1284,7 +1320,9 @@ function lobbyView() {
   return h('div', { class: 'lobby-two' },
     h('section', { class: 'lobby' },
       h('span', { class: 'tag tag--rose' }, restore ? '저장 파일에서 이어하기' : s.room.settings.solo ? '단독 수사' : '수사본부'),
-      h('h2', {}, s.room.settings.name),
+      // the host names the headquarters right here (also under 방 설정)
+      h('div', { class: 'row wrap lobby-title' }, h('h2', {}, s.room.settings.name),
+        isHost ? h('button', { type: 'button', class: 'small', onclick: renameRoom, 'aria-label': '수사본부 이름 짓기' }, '이름 짓기') : null),
       h('p', {}, s.case ? s.case.title : '방장이 사건 파일을 고르고 있어요.'),
       h('div', { class: 'metadata' },
         h('span', { class: 'tag tag--sky' }, icon('users'), `참가 ${s.players.length}/${capacity}명`),
@@ -1340,7 +1378,7 @@ function roomSettingsCard() {
     h('input', { type: 'checkbox', checked: st[key], onchange: (e) => act('updateSettings', { settings: { [key]: e.target.checked } }) }),
     h('span', {}, label, h('span', { class: 'muted small' }, hint)));
   return h('div', { class: 'card room-settings' },
-    h('div', { class: 'row' }, h('h3', { class: 'grow' }, '방 설정'), h('button', { class: 'small', onclick: renameRoom }, '이름 바꾸기')),
+    h('div', { class: 'row' }, h('h3', { class: 'grow' }, '방 설정'), h('button', { class: 'small', onclick: renameRoom }, '이름 짓기')),
     h('p', { class: 'small' }, `방 이름: ${st.name}`),
     capacityField(st),
     segmented('난이도', Object.fromEntries(Object.entries(DIFFICULTY).map(([k, d]) => [k, d.name])), st.difficulty ?? 'guide', (k) => act('updateSettings', { settings: { difficulty: k } })),
@@ -1380,7 +1418,7 @@ function renameRoom() {
     const res = await act('updateSettings', { settings: { name: input.value } }, { quiet: true });
     if (res.status === 200) closeModal();
     else toast(errorText(res), 'error');
-  } }, h('h3', {}, '방 이름 바꾸기'), input,
+  } }, h('h3', {}, '수사본부 이름 짓기'), input,
     h('div', { class: 'row end' }, h('button', { type: 'button', class: 'ghost', onclick: closeModal }, '취소'), h('button', { class: 'primary', type: 'submit' }, '저장'))));
 }
 
