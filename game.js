@@ -283,7 +283,7 @@ function render() {
   $('stageBadge').textContent = s.room.stageLabel;
   if ($('codeBtn').dataset.code !== s.room.code) {
     $('codeBtn').dataset.code = s.room.code;
-    $('codeBtn').replaceChildren(h('span', { class: 'code-label' }, '초대 코드 '), s.room.code); // phones show the code alone
+    $('codeBtn').replaceChildren(icon('link'), h('span', { class: 'code-label' }, '초대 링크 '), s.room.code); // phones show the code alone
   }
   const banner = $('banner');
   const problem = s.room.broken?.message ?? s.room.caseError;
@@ -1259,7 +1259,11 @@ function lobbyView() {
       p.isHost ? h('span', { class: 'tag tag--brass' }, '방장') : h('span', { class: `tag ${p.ready ? 'tag--teal-l' : 'tag--paper2'}` }, p.ready ? '준비 완료' : '준비 전'),
       p.team && teamName(p.team) ? h('span', { class: 'tag tag--sky' }, teamName(p.team)) : null,
       p.connected ? null : h('span', { class: 'tag tag--rose' }, '연결 끊김')));
-  const emptySeat = (name) => h('div', { class: 'seat empty' }, h('div', { class: 'portrait' }, icon('user')), name ? h('strong', {}, name) : null, h('span', { class: 'muted' }, name ? '이 자리 비어 있음' : '친구 대기 중'));
+  // while friends can still come in, an empty seat hands out the invite link
+  const open = !s.room.settings.solo && !s.room.settings.locked;
+  const emptySeat = (name) => h(open ? 'button' : 'div', { class: 'seat empty', ...(open ? { type: 'button', onclick: () => invite(link), title: '초대 링크 복사' } : {}) },
+    h('div', { class: 'portrait' }, icon('user')), name ? h('strong', {}, name) : null, h('span', { class: 'muted' }, name ? '이 자리 비어 있음' : '친구 대기 중'),
+    open ? h('span', { class: 'tag tag--teal-l' }, icon('link'), '초대 링크 복사') : null);
   const seatList = restore
     ? restore.seats.map((x) => {
         const p = s.players.find((pl) => pl.id === x.id);
@@ -1330,14 +1334,15 @@ function lobbyView() {
         s.case ? h('span', { class: 'tag tag--brass-l' }, `권장 ${playersText(s.case.players)}`) : null,
         restore ? h('span', { class: 'tag tag--rose' }, '저장 파일에서 이어하기') : null,
         s.room.settings.locked && !s.room.settings.solo ? h('span', { class: 'tag tag--rose' }, '새 참가 잠김') : null),
+      s.room.settings.solo ? null : h('div', { class: 'stack tight lobby-invite' },
+        h('span', { class: 'field' }, '초대 링크 — 친구에게 보내 주세요'),
+        h('div', { class: 'row' }, h('code', { class: 'invite' }, link), h('button', { type: 'button', class: 'small primary', onclick: () => invite(link) }, icon('link'), canShare() ? '보내기' : '링크 복사'))),
       h('div', { class: 'seats' }, ...seatList),
       teamPicker(),
       restore ? h('p', { class: 'muted small' }, '저장 파일의 자리마다 한 명씩 들어와요. 친구는 초대 링크로 들어와 자기 자리를 골라요. 비어 있는 자리는 시작할 때 빠지고, 그 자리의 공유하지 않은 단서는 다시 찾을 수 있게 돼요.') : null,
       s.room.settings.solo
         ? h('p', { class: 'muted small' }, '다른 사람은 들어올 수 없어요. 여럿이 함께 해야 하는 장치는 혼자서도 풀 수 있게 바뀌어요. 예: 동시에 밟아야 하는 발판은 하나씩 밟아 불을 켜면 열려요.')
-        : h('div', { class: 'stack tight' },
-            h('span', { class: 'field' }, '초대 링크 — 친구에게 보내 주세요'),
-            h('div', { class: 'row' }, h('code', { class: 'invite' }, link), h('button', { class: 'small', onclick: () => copy(link) }, '링크 복사')))),
+        : null),
     drawers,
   );
 }
@@ -2660,7 +2665,20 @@ function copy(text) {
   navigator.clipboard?.writeText(text).then(() => toast('복사했어요.', 'good'), () => toast(text));
 }
 
-$('codeBtn').addEventListener('click', () => copy(`${location.href.split('#')[0]}#${code}`));
+// Phones and tablets hand the invite to the share sheet (messenger, text); elsewhere it is copied.
+const canShare = () => Boolean(navigator.share) && matchMedia('(pointer: coarse)').matches;
+function invite(link) {
+  const name = state?.room.settings.name;
+  if (!canShare()) {
+    const shown = () => toast(`복사가 막혀 있어요. 이 링크를 친구에게 보내 주세요: ${link}`);
+    if (!navigator.clipboard) return shown();
+    navigator.clipboard.writeText(link).then(() => toast('초대 링크를 복사했어요. 친구에게 보내 주세요.', 'good'), shown);
+    return;
+  }
+  navigator.share({ title: '탐정실록', text: name ? `'${name}'에서 같이 추리해요.` : '같이 추리해요.', url: link }).catch((e) => e?.name !== 'AbortError' && copy(link));
+}
+
+$('codeBtn').addEventListener('click', () => invite(`${location.href.split('#')[0]}#${code}`));
 $('emblem').append(icon('search'));
 $('modal').addEventListener('click', (e) => e.target === $('modal') && closeModal());
 $('shift').addEventListener('click', endShift);

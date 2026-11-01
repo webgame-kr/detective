@@ -84,6 +84,12 @@ body.og:not(.field)[data-stage='lobby'] .side-col { display: none; }
 body.og:not(.field)[data-stage='lobby'] .scene-col > #chatBox { display: none; }
 body.og:not(.field) .lobby-two { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, 1fr); gap: 30px; align-items: start; }
 body.og:not(.field) .lobby-two > .lobby { margin: 0; }
+/* the invite link sits right under the head count, and an empty seat hands it out too */
+body.og:not(.field) .lobby-invite { margin: 3px 0 12px; }
+body.og:not(.field) .lobby-invite .row { flex-wrap: nowrap; }
+body.og:not(.field) .lobby-invite button { flex: none; }
+body.og:not(.field) button.seat.empty { font: inherit; color: var(--og-muted); cursor: pointer; --drop: 0px; }
+body.og:not(.field) button.seat.empty:is(:hover, :focus-visible) { outline-color: var(--og-teal-lo); color: var(--og-ink); background: rgba(255, 255, 255, 0.35); }
 body.og:not(.field) .lobby-two .drawer .case-sheet.compact { --drop: 0px; }
 body.og:not(.field) .lobby-two .drawer .room-settings { --drop: 0px; padding: 0; background: transparent; box-shadow: none; }
 body.og:not(.field) .lobby-two .drawer .room-settings > h3 { display: none; }
