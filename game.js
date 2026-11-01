@@ -1092,10 +1092,12 @@ function liveBubbles() {
   return out;
 }
 
-// The canvas only moves when the window or the map size changes, so its box is measured then.
+// The canvas only moves when the window, the map size or the space around it changes (fitCanvas
+// records that in dataset.fit: the corner folding or opening slides the map), so its box is
+// measured then.
 let canvasBox = { key: null, r: null };
 function placeWorld(canvas, anchors) {
-  const key = `${canvas.width}x${canvas.height}:${canvas.style.width}:${innerWidth}x${innerHeight}`;
+  const key = `${canvas.dataset.fit}:${canvas.style.width}`;
   if (canvasBox.key !== key) canvasBox = { key, r: canvas.getBoundingClientRect() };
   const r = canvasBox.r;
   const k = r.width / canvas.width;
