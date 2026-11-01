@@ -1350,7 +1350,10 @@ class Game {
     const solid = new Set((this.ix.objectsByLocation.get(locationId) ?? [])
       .filter((o) => this.room.world.objects[o.id].active && o.solid !== false && o.kind !== 'hide')
       .map((o) => `${o.x}:${o.y}`));
-    const shut = new Set((this.ix.exitsByLocation.get(locationId) ?? []).filter((e) => !this.room.world.exits[e.id].open).map((e) => `${e.from.x}:${e.from.y}`));
+    // a tile is shut when none of the exits on it is open
+    const exits = this.ix.exitsByLocation.get(locationId) ?? [];
+    const open = new Set(exits.filter((e) => this.room.world.exits[e.id].open).map((e) => `${e.from.x}:${e.from.y}`));
+    const shut = new Set(exits.map((e) => `${e.from.x}:${e.from.y}`).filter((k) => !open.has(k)));
     return (x, y) => loc.tiles[y]?.[x] !== '.' || solid.has(`${x}:${y}`) || shut.has(`${x}:${y}`);
   }
 
@@ -2530,7 +2533,9 @@ function stepOnce(g, pid, dir, rt) {
   const loc = g.ix.locations.get(p.location);
   const nx = p.x + d[0];
   const ny = p.y + d[1];
-  const exit = g.ix.exitAt.get(`${loc.id}:${nx}:${ny}`);
+  // a tile may hold several exits (one set rebuilt as another room): the first open one is taken
+  const doors = g.ix.exitsAt.get(`${loc.id}:${nx}:${ny}`);
+  const exit = doors && (doors.find((e) => g.room.world.exits[e.id].open) ?? doors[0]);
   if (exit) {
     if (!g.room.world.exits[exit.id].open) return { moved: false, reason: 'locked', message: exit.lockedMessage ?? '잠겨 있어요.' };
     // an open door may still be only for some (pass), e.g. the guard room for whoever was brought there
@@ -3462,7 +3467,11 @@ function mapView(g, me) {
     tiles: loc.tiles,
     floor: loc.floor ?? null,
     art: loc.art ? { url: assetUrl(g.caseDef, loc.art.image), tile: loc.art.tile } : null,
-    exits: (ix.exitsByLocation.get(loc.id) ?? []).map((e) => ({
+    // one door per tile: of several sharing a tile, the one a step would take (the first open one)
+    exits: (ix.exitsByLocation.get(loc.id) ?? []).filter((e) => {
+      const here = ix.exitsAt.get(`${loc.id}:${e.from.x}:${e.from.y}`);
+      return (here.find((x) => room.world.exits[x.id].open) ?? here[0]) === e;
+    }).map((e) => ({
       id: e.id,
       x: e.from.x,
       y: e.from.y,
@@ -3999,7 +4008,7 @@ const META_FIELDS = {
   cover: f.str(80, true),
   solo: f.bool(true),
   // the look of the day-change card: a train on a rail, a star chart, a string of lanterns, footprints in snow
-  theme: f.oneOf(['train', 'stars', 'festival', 'snow', 'radio'], true),
+  theme: f.oneOf(['train', 'stars', 'festival', 'snow', 'radio', 'film'], true),
   // a line for the day-change card of each day and night, five each
   stageCards: f.any(true),
   // play time when one person plays alone (walking every room yourself takes longer)
@@ -4144,9 +4153,8 @@ function validateCase(pkg) {
     const toOk = checkObject(e.to, end, `${p}.to`, ctx, errors);
     if (fromOk && !ctx.isFloor(e.from.location, e.from.x, e.from.y)) errors.push(`${p}.from: 바닥('.') 칸이어야 해요`);
     if (toOk && !ctx.isStandable(e.to.location, e.to.x, e.to.y)) errors.push(`${p}.to: 도착 칸은 출입구나 대상이 없는 바닥이어야 해요`);
-    const key = `${e.from?.location}:${e.from?.x}:${e.from?.y}`;
-    if (exitFrom.has(key)) errors.push(`${p}.from: 같은 칸에 출입구가 두 개 있어요`);
-    exitFrom.add(key);
+    // several exits may share a tile (a set rebuilt as another room on another day): the first open one is taken
+    exitFrom.add(`${e.from?.location}:${e.from?.x}:${e.from?.y}`);
   });
 
   // devices
@@ -4437,7 +4445,9 @@ function compileCase(pkg) {
     index: {
       locations,
       exits,
-      exitAt: new Map([...exits.values()].map((e) => [`${e.from.location}:${e.from.x}:${e.from.y}`, e])),
+      // the first exit on each tile; exitsAt: all of them, in package order
+      exitAt: new Map([...exits.values()].reverse().map((e) => [`${e.from.location}:${e.from.x}:${e.from.y}`, e])),
+      exitsAt: group([...exits.values()], (e) => `${e.from.location}:${e.from.x}:${e.from.y}`),
       exitsByLocation: group([...exits.values()], (e) => e.from.location),
       objects,
       objectAt: new Map([...objects.values()].map((o) => [`${o.location}:${o.x}:${o.y}`, o])),

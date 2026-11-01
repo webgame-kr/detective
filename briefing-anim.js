@@ -795,7 +795,135 @@ const radioScene = {
   },
 };
 
-const SCENES = { train: trainScene, festival: festivalScene, snow: snowScene, stars: starsScene, radio: radioScene };
+
+// ---------- 컷과 컷 사이 (film) ----------
+// colours from the film cast sheets, the stage maps and the cover
+const FM = {
+  black: '#121218', curtain: '#1a1a20', curtain2: '#22222a', floor: '#3a3a42', floorD: '#2e2e34',
+  wall: '#4a2e2a', wallD: '#3e2622', counter: '#7a4a34', counterLit: '#a8704c', glass: '#cfe2ea', drink: '#c98a3a',
+  clockRim: '#c9a24a', clockFace: '#f3ead6', ink: '#2a2622', lamp: '#f2d080', lampGlow: '#6a5030',
+  windowDay: '#f0e2b0', windowNight: '#1e2236', actor: '#3a3446', actorSkin: '#d9a07a', actorHair: '#2a2230',
+  monitor: '#0e0e12', bezel: '#2a2a32', tally: '#ff3b30', tallyDim: '#5a1414', slate: '#1e1e22', slateTop: '#e8e8e8',
+  batten: '#6a5a40', battenLit: '#8a7550', flat: '#2c2a26', stencil: '#d9d0b8', work: '#f2e6b0', workGlow: '#5a5444', stand: '#8a8f9a', tape: '#3a6fd8',
+};
+
+function filmBar(ctx, x0, y0, w, h, { day = false, actor = true, glassDown = 0 } = {}) {
+  px(ctx, x0, y0, w, h, FM.wall);
+  for (let x = x0; x < x0 + w; x += 6) px(ctx, x, y0, 1, Math.floor(h * 0.62), FM.wallD);
+  const wx = x0 + 4, wy = y0 + 4, ww = Math.floor(w / 4), wh = Math.floor(h / 2.2);
+  px(ctx, wx - 1, wy - 1, ww + 2, wh + 2, FM.ink); px(ctx, wx, wy, ww, wh, day ? FM.windowDay : FM.windowNight);
+  px(ctx, wx + Math.floor(ww / 2), wy, 1, wh, FM.ink); px(ctx, wx, wy + Math.floor(wh / 2), ww, 1, FM.ink);
+  const cx = x0 + Math.floor(w * 0.76), cy = y0 + 8;                       // the wall clock at ten past three
+  for (let a = 0; a < 360; a += 15) px(ctx, cx + Math.round(Math.cos(a * Math.PI / 180) * 4), cy + Math.round(Math.sin(a * Math.PI / 180) * 4), 1, 1, FM.clockRim);
+  px(ctx, cx - 3, cy - 2, 7, 5, FM.clockFace); px(ctx, cx - 2, cy - 3, 5, 7, FM.clockFace);
+  px(ctx, cx, cy, 2, 1, FM.ink); px(ctx, cx, cy - 2, 1, 2, FM.ink);
+  const by = y0 + Math.floor(h * 0.66);
+  px(ctx, x0, by, w, y0 + h - by, FM.counter); px(ctx, x0, by, w, 2, FM.counterLit);
+  const gx = x0 + Math.floor(w / 2) + 6, gy = by - 7 + glassDown;
+  px(ctx, gx, gy, 5, 7, FM.glass); px(ctx, gx + 1, gy + 2, 3, 5, FM.drink);
+  if (actor) {
+    const ax = x0 + Math.floor(w / 2) - 10, ay = by - 18;
+    px(ctx, ax + 3, ay, 7, 6, FM.actorHair); px(ctx, ax + 6, ay + 2, 4, 5, FM.actorSkin); px(ctx, ax + 10, ay + 4, 1, 1, FM.actorSkin);
+    px(ctx, ax, ay + 7, 12, 11, FM.actor); px(ctx, ax + 9, ay + 10 + glassDown, 5, 2, FM.actor); px(ctx, ax + 13, ay + 10 + glassDown, 2, 2, FM.actorSkin);
+  }
+}
+
+function filmStage(ctx, t) {
+  px(ctx, 0, 0, W, H, FM.black);
+  for (let x = 0; x < W; x += 8) { px(ctx, x, 0, 8, 58, x % 16 ? FM.curtain : FM.curtain2); px(ctx, x + 3, 0, 2, 58, '#141418'); }
+  px(ctx, 0, 70, W, 20, FM.floor);
+  for (let i = 0; i < 26; i++) if (hash(i + 700) > 0.5) px(ctx, Math.floor(hash(i + 710) * W), 70 + Math.floor(hash(i + 720) * 20), 2, 1, FM.floorD);
+  // the bar set comes up out of the dark, light by light
+  const up = clamp((t - 0.4) / 1.4, 0, 1);
+  filmBar(ctx, 28, 22, 104, 48, { day: false, actor: false });
+  if (up < 1) { ctx.globalAlpha = 1 - up; px(ctx, 28, 22, 104, 48, FM.black); ctx.globalAlpha = 1; }
+  // the pendant over the bar
+  px(ctx, 80, 0, 1, 26, '#2a2a32'); px(ctx, 76, 26, 9, 2, FM.clockRim);
+  if (up > 0.3) for (let k = 0; k < 14; k += 2) px(ctx, 74 + k, 30 + (k % 4), 1, 1, FM.lampGlow);
+  // camera with its red tally on the left
+  px(ctx, 10, 44, 18, 10, '#24242c'); px(ctx, 28, 46, 6, 6, '#34343e'); px(ctx, 17, 54, 3, 14, '#3a3a44'); px(ctx, 8, 68, 22, 3, '#2a2a32');
+  const rec = t > 2.6;
+  px(ctx, 12, 46, 3, 3, rec ? FM.tally : FM.tallyDim);
+  if (rec) { px(ctx, 11, 45, 1, 1, '#7a2a30'); px(ctx, 15, 45, 1, 1, '#7a2a30'); }
+  // the slate claps once
+  const sx = 120, sy = 70;
+  px(ctx, sx, sy, 28, 14, FM.slate);
+  const open = t < 2.4 ? 5 : t < 2.6 ? 2 : 0;
+  for (let k = 0; k < 28; k += 2) px(ctx, sx + k, sy - 4 - Math.round(open * (k / 28)), 2, 3, (k / 2) % 2 ? FM.slate : FM.slateTop);
+  digits(ctx, '23', sx + 3, sy + 3, FM.slateTop); digits(ctx, '4', sx + 18, sy + 3, FM.slateTop);
+  if (t > 2.6 && t < 2.9) for (let i = 0; i < 4; i++) px(ctx, sx + 30 + i * 2, sy - 6 + i, 1, 1, FM.slateTop);   // the clap
+}
+
+function filmMonitor(ctx, t) {
+  // the editing room: the director's monitor receives the take
+  px(ctx, 0, 0, W, H, '#1b1b22');
+  for (let x = 0; x < W; x += 10) px(ctx, x, 0, 1, H, '#202028');
+  px(ctx, 24, 6, 112, 70, FM.bezel); px(ctx, 28, 10, 104, 60, FM.monitor);
+  const arrived = t > 0.5;
+  if (!arrived) {
+    for (let i = 0; i < 3; i++) if (Math.floor(t * 6) % 3 === i) px(ctx, 74 + i * 5, 38, 3, 3, '#5a5b66');   // receiving…
+  } else {
+    // the take plays: he lowers the glass
+    const down = t > 1.4 && t < 2.4 ? 1 : 0;
+    filmBar(ctx, 28, 10, 104, 60, { day: true, actor: true, glassDown: down });
+    for (let y = 10; y < 70; y += 3) for (let x = 28; x < 132; x += 2) { ctx.globalAlpha = 0.14; px(ctx, x, y, 1, 1, '#000000'); ctx.globalAlpha = 1; }
+    px(ctx, 100, 61, 30, 8, '#111111');
+    px(ctx, 102, 63, 3, 5, FM.slateTop); px(ctx, 103, 63, 1, 1, '#111111');            // a tiny "B"
+    digits(ctx, '22:02', 107, 63, FM.slateTop);
+  }
+  px(ctx, 74, 76, 12, 8, FM.bezel); px(ctx, 62, 84, 36, 3, FM.bezel);
+  // the desk lamp and the director's hand on the jog wheel
+  px(ctx, 140, 60, 14, 4, '#3a3a44'); px(ctx, 144, 52, 6, 8, '#7a5240'); px(ctx, 146, 50, 3, 2, FM.actorSkin);
+}
+
+function filmBackstage(ctx, t) {
+  px(ctx, 0, 0, W, H, '#141418');
+  // the work light swings a little on its cable
+  const sway = Math.sin(t * 1.6) * 3;
+  const lx = 104 + sway, ly = 8;
+  for (let y = 0; y < 84; y++) {
+    const spread = Math.max(0, (y - ly) * 0.62);
+    for (let x = Math.floor(lx - spread); x <= lx + spread; x++) {
+      if (x < 0 || x >= W) continue;
+      const inner = Math.abs(x - lx) < spread * 0.55;
+      if (!inner && (x + y) % 2) continue;
+      ctx.globalAlpha = inner ? 0.22 : 0.12; px(ctx, x, y, 1, 1, FM.work); ctx.globalAlpha = 1;
+    }
+  }
+  // flat backs: battens and stencil numbers
+  for (let i = 0; i < 6; i++) {
+    const fx = 6 + i * 26;
+    px(ctx, fx, 0, 3, 74, FM.batten); px(ctx, fx, 0, 1, 74, FM.battenLit);
+  }
+  px(ctx, 0, 34, W, 3, FM.batten);
+  px(ctx, 84, 14, 3, 5, FM.stencil); px(ctx, 84, 14, 5, 1, FM.stencil); px(ctx, 84, 16, 4, 1, FM.stencil);   // "F"
+  digits(ctx, '6', 90, 14, FM.stencil);
+  px(ctx, lx - 1, 0, 2, ly, '#5e6470'); px(ctx, lx - 3, ly, 6, 3, FM.work);
+  // floor, the fallen stand, a scrap of blue tape catching the light
+  px(ctx, 0, 74, W, 16, '#2a2826'); px(ctx, 0, 74, W, 1, '#3a3836');
+  for (let i = 0; i < 20; i++) { px(ctx, 92 + i, 72 - Math.floor(i / 3), 1, 1, FM.stand); px(ctx, 92 + i, 73 - Math.floor(i / 3), 1, 1, '#5e6470'); }
+  px(ctx, 88, 70, 7, 6, '#6a5a3a'); px(ctx, 89, 71, 5, 4, '#8a7550');
+  const glint = Math.floor(t * 3) % 3 === 0;
+  px(ctx, 74, 78, 6, 2, FM.tape); if (glint) px(ctx, 76, 78, 1, 1, '#e8eefc');
+  if (t > 2.4) { const k = Math.floor((t - 2.4) / 0.5) % 2; if (k === 0) { px(ctx, 82, 12, 13, 1, FM.stencil); px(ctx, 82, 21, 13, 1, FM.stencil); } }
+}
+
+const filmScene = {
+  duration: 9.6,
+  captions: [
+    [0, '드라마 「겨울의 증언」, 마지막 블록 촬영.', false],
+    [3.2, '밤 10시 3분, 감독의 화면에 테이크가 도착했다.', false],
+    [6.4, '밤 10시 반, 세트 뒤 통로에서 그가 발견됐다.', false],
+    [8.2, '화면 속 그는, 정말 그 시각에 살아 있었을까.', false],
+  ],
+  draw(ctx, t) {
+    if (t < 3.2) return filmStage(ctx, t);
+    if (t < 6.4) return filmMonitor(ctx, t - 3.2);
+    filmBackstage(ctx, t - 6.4);
+  },
+};
+
+const SCENES = { train: trainScene, festival: festivalScene, snow: snowScene, stars: starsScene, radio: radioScene, film: filmScene };
 
 // ---------- the player ----------
 export function briefingAnim(theme) {
