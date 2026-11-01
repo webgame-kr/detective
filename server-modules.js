@@ -3023,7 +3023,9 @@ const conditions = require('./conditions');
 //   react  someone has something to say about it
 //   ask    a question it unlocked is waiting, not yet heard by this player
 //   share  sharing what this player holds would unlock a question
-// Hints name a person and a place, never what the reaction or question says.
+//   combine this clue and another one in sight make a conclusion card not made yet
+// Hints name a person and a place, never what the reaction or question says, and a pair hint
+// never says which other clue makes the pair.
 
 const index = new WeakMap();
 
@@ -3095,8 +3097,16 @@ function hintsView(g, me) {
     }
     if (waiting) news.push(o.id);
   }
+  // pairs that make a conclusion card, both halves in sight and the card not made yet
+  for (const d of ix.deductions ?? []) {
+    if (visible.has(d.result) || !d.from.every((id) => visible.has(id))) continue;
+    for (const id of d.from) {
+      const list = (clues[id] ??= []);
+      if (!list.some((x) => x.kind === 'combine')) list.push({ kind: 'combine' });
+    }
+  }
   // the strongest hint first for each clue
-  const order = { show: 0, ask: 1, share: 2, react: 3 };
+  const order = { show: 0, ask: 1, combine: 2, share: 3, react: 4 };
   for (const list of Object.values(clues)) list.sort((a, b) => order[a.kind] - order[b.kind]);
   return { clues, news };
 }

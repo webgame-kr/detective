@@ -711,7 +711,7 @@ function settingsView() {
         // private windows: the choice lasts until the page closes
       }
     }),
-    h('p', { class: 'muted small' }, '단서를 누구에게 보여 줄지, 누구에게 새 질문이 생겼는지 알려 줘요. 끄면 혼자 추리해요.'),
+    h('p', { class: 'muted small' }, '단서를 누구에게 보여 줄지, 누구에게 새 질문이 생겼는지, 어떤 단서에 겹쳐 볼 짝이 있는지 알려 줘요. 끄면 혼자 추리해요.'),
     segmented('글자 크기', { normal: '보통', large: '크게' }, a11y.text, (k) => setA11y('text', k)),
     segmented('증거 그림', { normal: '보통', strong: '또렷하게' }, a11y.pictures, (k) => setA11y('pictures', k)),
     h('p', { class: 'muted small' }, '또렷하게: 그림의 대비를 높이고 크게 보여 줘요. 색을 구분하기 어려울 때 도움이 돼요.'),
@@ -1702,7 +1702,10 @@ const HINT_TEXT = {
   ask: (x) => `${x.who}에게 새 질문이 생겼어요 · ${x.place}`,
   share: (x) => `공동 보드에 공유하면 ${x.who}에게 물어볼 것이 생겨요`,
   react: (x) => `${x.who}도 이 단서에 대해 할 말이 있어요 · ${x.place}`,
+  combine: () => '수첩이나 공동 보드에 이 단서와 겹쳐 볼 짝이 있어요 · 다른 단서와 겹쳐 보기',
 };
+// clues with a conclusion card still to be made from them (the pair is not named)
+const hasPair = (clueId) => hintsFor(clueId).some((x) => x.kind === 'combine');
 const hintsFor = (clueId) => (hintsOn ? state.hints?.clues?.[clueId] ?? [] : []);
 // a card gets a mark only for hints that move things on
 const strongHint = (clueId) => hintsFor(clueId).some((x) => x.kind !== 'react');
@@ -1756,13 +1759,14 @@ function combineView(c) {
     h('p', { class: 'eyebrow' }, '단서 겹쳐 보기'),
     h('h3', {}, `‘${c.name}’과 함께 볼 단서`),
     h('p', { class: 'muted small' }, '두 단서가 함께 말해 주는 것이 있으면 추론 카드가 생겨요.'),
+    hasPair(c.id) ? h('p', { class: 'small hint hint--combine' }, '힌트: ‘짝 있음’이 붙은 단서 가운데 이 단서와 이어지는 것이 있어요.') : null,
     h('div', { class: 'picker__list' }, ...[...all.values()].map((x) => h('button', { type: 'button', class: 'picker__card', onclick: async () => {
       const res = await act('combine', { a: c.id, b: x.id }, { quiet: true });
       if (res.status !== 200) return toast(errorText(res), 'error');
       if (!res.body.made) return toast(res.body.reaction, 'info');
       closeModal();
       toast(res.body.already ? '이미 만든 추론이에요.' : '새 추론 카드를 수첩에 넣었어요.', res.body.already ? 'info' : 'good');
-    } }, h('span', { class: 'eyebrow' }, kindLabel(x.kind)), h('strong', {}, x.name)))),
+    } }, h('span', { class: 'eyebrow' }, kindLabel(x.kind), hasPair(c.id) && hasPair(x.id) ? h('span', { class: 'tag tag--brass-l pair-tag' }, '짝 있음') : null), h('strong', {}, x.name)))),
     h('div', { class: 'row end' }, h('button', { onclick: closeModal }, '닫기')),
   );
 }

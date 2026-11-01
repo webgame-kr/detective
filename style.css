@@ -416,6 +416,9 @@ input[type='file'] { font-size: 12px; padding: 8px; }
 .hint--share::before { content: '↗'; color: #2F8C74; }
 .hint--react { border-left-color: #B9A88A; color: #6B5D45; }
 .hint--react::before { content: '…'; color: #8A7A5E; }
+.hint--combine { border-left-color: #6E7FA8; }
+.hint--combine::before { content: '+'; color: #4E5F88; }
+.picker__card .pair-tag { margin-left: 6px; font-size: 11px; padding: 0 6px; vertical-align: middle; }
 
 /* today's goals (case.goals): a checklist in the brief and on the night screen */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
