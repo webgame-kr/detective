@@ -64,7 +64,9 @@
 .nui-icon svg { width: 100%; height: 100%; }
 
 /* date plate */
-.nui-corner { position: absolute; left: 27px; top: 27px; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; max-width: min(420px, 60vw); }
+.nui-corner { position: absolute; left: 27px; top: 27px; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; max-width: min(680px, 60vw); }
+/* below the top row (date plate and end-of-day button) the corner keeps its narrower column */
+.nui-corner > :not(.nui-corner__top) { max-width: min(420px, 100%); }
 .nui-date { display: flex; align-items: stretch; }
 /* today's goals under the date plate */
 .nui .nui-goal { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 12px; text-align: left; font-family: var(--font-body); color: var(--n-ink); cursor: pointer; max-width: 100%; min-width: 0; box-sizing: border-box; }
@@ -212,6 +214,11 @@ body.field .dialogue-card, body.field .modal-card { font-family: 'Galmuri14', 'G
   .nui-goal__text { font-size: 12px; line-height: 16px; }
   .nui-date__day { padding: 6px 9px; }
   .nui-date__day b { font-size: var(--fs-title); line-height: 24px; }
+  .nui-corner__top { gap: 6px; }
+  .nui-endbar, .nui .nui-end { min-height: 40px; }
+  .nui .nui-endbar .nui-fold { padding: 0 9px; font-size: var(--fs-label); }
+  .nui .nui-end { padding: 4px 9px; gap: 6px; }
+  .nui .nui-end__key { display: none; }
   .nui-date__phase { font-size: 15px; line-height: 18px; }
   .nui-tabs { top: auto; bottom: 0; left: 0; right: 0; flex-direction: row; align-items: stretch; gap: 3px; padding: 6px 6px 9px; background: var(--screen-bg); }
   .nui .nui-tab, .nui .nui-tab[aria-expanded='true'] { width: auto; flex: 1; min-width: 0; height: 48px; padding: 0; justify-content: center; gap: 2px; flex-direction: column; }
@@ -588,7 +595,33 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui .nui-fold__goal:empty { display: none; }
 .nui .nui-fold__goal { white-space: nowrap; }
 .nui-corner:not(.is-folded) .nui-fold__goal { display: none; }
-.nui-corner.is-folded > :not(.nui-date) { display: none !important; }
+.nui-corner.is-folded > :not(.nui-corner__top) { display: none !important; }
+
+/* the date plate and, beside it, the goal count and the end-of-day button in one box
+   (end-day button design: green = press now, brass = waiting for others, grey = something left) */
+.nui-corner__top { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; max-width: 100%; }
+.nui-endbar { display: flex; align-items: stretch; align-self: flex-start; padding: 0; min-height: 48px; }
+.nui .nui-endbar .nui-fold { border-left: none; padding: 0 15px; font-size: var(--fs-body); }
+.nui .nui-end {
+  --t: #D8D0BC; --t-hi: #E8E1D3; --t-lo: #A69D8B; --t-ink: #5F574A;
+  display: flex; align-items: center; gap: 9px; margin: 0; padding: 6px 12px 6px 15px; min-height: 48px;
+  border: none; border-left: 3px solid var(--n-ink); border-radius: 0; background: var(--t); color: var(--t-ink);
+  box-shadow: inset 3px 3px 0 0 var(--t-hi), inset -3px -3px 0 0 var(--t-lo);
+  font-family: var(--font-body); text-align: left; cursor: pointer; transition: none;
+}
+.nui .nui-end[hidden] { display: none; }
+.nui .nui-end[data-tone='go'] { --t: var(--green); --t-hi: var(--green-hi); --t-lo: var(--green-lo); --t-ink: var(--green-text); }
+.nui .nui-end[data-tone='wait'] { --t: var(--tab-brief); --t-hi: var(--tab-brief-hi); --t-lo: var(--tab-brief-lo); --t-ink: var(--n-ink); }
+.nui .nui-end:hover { filter: brightness(1.05); }
+.nui-end__icon .nui-icon { display: block; width: 18px; height: 18px; }
+.nui-end__icon svg { width: 18px; height: 18px; }
+.nui-end__text { display: flex; flex-direction: column; gap: 2px; }
+.nui-end__label { font-size: var(--fs-body); line-height: 18px; font-weight: 400; white-space: nowrap; }
+.nui-end__sub { font-family: var(--font-label); font-size: 11px; line-height: 13px; white-space: nowrap; opacity: 0.85; }
+.nui-end__sub[hidden] { display: none; }
+.nui .nui-end__key { margin-left: 6px; padding: 1px 5px; font-family: var(--font-label); font-size: var(--fs-label); line-height: 15px; color: var(--n-ink); --bg: var(--paper-hi); --hi: #fff; --lo: var(--paper-lo); }
+/* the day-end check (solo with goals left): what is still undone, and what skipping it costs */
+.endday-left { margin: 9px 0 0; padding: 9px 12px; border: 3px solid #A64A2E; background: #F6E3D8; color: #2E2A24; white-space: pre-line; }
 
 /* ---------- phones held sideways (short and wide): the tabs stand along the right edge as a
    slim icon column, so the map keeps the full height; the note opens beside it, the touch pad

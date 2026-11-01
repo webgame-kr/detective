@@ -28,6 +28,8 @@ const ICONS = {
   right: '<path d="M10 6h1v1H10zM9 5h1v3H9zM8 4h1v5H8zM1 6h7v1H1z"/>',
   down: '<path d="M2 3h8v2H2zM3 5h6v2H3zM4 7h4v2H4zM5 9h2v1H5z"/>',
   up: '<path d="M5 2h2v1H5zM4 3h4v2H4zM3 5h6v2H3zM2 7h8v2H2z"/>',
+  moon: '<path d="M4 1h4v1H4zM2 2h3v1H2zM1 3h3v6H1zM2 9h3v1H2zM4 10h4v1H4zM4 3h1v1H4zM4 8h1v1H4z"/>',
+  check: '<path d="M1 5h2v2H1zM3 7h2v2H3zM5 5h2v2H5zM7 3h2v2H7zM9 1h2v2H9z"/>',
 };
 
 export function dotIcon(name) {
@@ -41,7 +43,8 @@ export function dotIcon(name) {
 // opts.enabled(): whether shortcuts apply right now (e.g. not during a dialogue or a modal)
 // opts.onRender(id, body): fill the open note; opts.onChange(id): after it opens or closes
 // opts.onPrompt(): the E bubble was clicked; opts.onToast(characterId): a record toast was clicked
-export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRender = () => {}, onChange = () => {}, onPrompt = () => {}, onToast = () => {} } = {}) {
+// opts.onEndDay(): the end-of-day button (or N) was pressed
+export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRender = () => {}, onChange = () => {}, onPrompt = () => {}, onToast = () => {}, onEndDay = () => {} } = {}) {
   let openId = null;
   let lastPhaseKey = null;
   let locked = false;
@@ -96,11 +99,21 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
   const foldGoal = h('span', { class: 'nui-fold__goal' });
   const foldBtn = h('button', { type: 'button', class: 'px nui-fold', 'aria-controls': 'nuiCornerMore', onclick: () => setFold(!folded) },
     foldGoal, h('span', { class: 'nui-fold__arrow', 'aria-hidden': 'true' }));
+  // the end-of-day button beside the goal count: a moon, what pressing does now, a second line
+  // (who is ready), and its key. The game sets the words and the tone: go (green, press now),
+  // wait (brass, waiting for others) or idle (grey, something is left today).
+  const endIcon = h('span', { class: 'nui-end__icon' });
+  const endLabel = h('strong', { class: 'nui-end__label' });
+  const endSub = h('small', { class: 'nui-end__sub' });
+  const endBtn = h('button', { type: 'button', class: 'nui-end', 'aria-keyshortcuts': 'N', onclick: () => onEndDay() },
+    endIcon, h('span', { class: 'nui-end__text' }, endLabel, endSub), h('span', { class: 'px nui-end__key', 'aria-hidden': 'true' }, 'N'));
+  const endBar = h('div', { class: 'px drop nui-endbar' }, foldBtn, endBtn);
   const corner = h('div', { class: 'nui-corner' },
-    h('section', { class: 'px drop nui-date', 'aria-label': '진행 날짜' },
-      h('div', { class: 'nui-date__day' }, h('small', {}, 'DAY'), dayNum),
-      h('div', { class: 'nui-date__info' }, h('div', { class: 'nui-date__row' }, phase, loc), days),
-      foldBtn),
+    h('div', { class: 'nui-corner__top' },
+      h('section', { class: 'px drop nui-date', 'aria-label': '진행 날짜' },
+        h('div', { class: 'nui-date__day' }, h('small', {}, 'DAY'), dayNum),
+        h('div', { class: 'nui-date__info' }, h('div', { class: 'nui-date__row' }, phase, loc), days)),
+      endBar),
     goalBox);
   let folded = true;
   try {
@@ -200,6 +213,22 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
     goalBox.classList.toggle('is-done', !g.next);
   }
 
+  // e: { label, sub, tone: 'go' | 'wait' | 'idle', icon: 'moon' | 'check' } or null to hide the button
+  let endKey = null;
+  function setEndDay(e) {
+    endBtn.hidden = !e;
+    if (!e) return;
+    const key = JSON.stringify(e);
+    if (key === endKey) return;
+    endKey = key;
+    endBtn.dataset.tone = e.tone;
+    endIcon.replaceChildren(dotIcon(e.icon ?? 'moon'));
+    endLabel.textContent = e.label;
+    endSub.textContent = e.sub ?? '';
+    endSub.hidden = !e.sub;
+    endBtn.setAttribute('aria-label', `${e.label}${e.sub ? ` · ${e.sub}` : ''} (N)`);
+  }
+
   function setPrompt(text, key = 'E') {
     prompt.hidden = !text;
     if (text) {
@@ -218,6 +247,12 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
   function onKey(e) {
     if (locked || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || isTyping() || !enabled()) return;
     if (e.target.closest?.('input, textarea, select')) return;
+    // N (by physical key, so a Korean IME gives ㅜ and it still works): end the day
+    if (e.code === 'KeyN' && !endBtn.hidden) {
+      e.preventDefault();
+      onEndDay();
+      return;
+    }
     const m = /^(?:Digit|Numpad)([1-7])$/.exec(e.code || '');
     if (!m) return;
     e.preventDefault();
@@ -393,6 +428,7 @@ export function mountNoteUI(root, { totalDays = 5, enabled = () => true, onRende
     setCount,
     setDate,
     setGoal,
+    setEndDay,
     setPrompt,
     isTyping,
     destroy() {

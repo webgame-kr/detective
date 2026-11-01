@@ -755,6 +755,7 @@ function renderField() {
   const s = state;
   hud.setDate({ day: s.room.day, phase: '낮 조사', location: s.map.name });
   hud.setGoal(goalProgress());
+  hud.setEndDay(endDayButton());
   renderSecurity();
   hud.setCount('notebook', s.notebook.clues.length);
   hud.setCount('party', `${s.players.filter((p) => p.connected).length}/${s.room.settings.capacity}`);
@@ -2261,6 +2262,70 @@ async function startGame() {
   }
 }
 
+// ---------- the end-of-day button (field HUD, beside the goal count) ----------
+// Alone it moves to the night; a member marks themself ready (준비 완료 → 준비함); the host moves
+// everyone, with how many are ready. Green: press now; brass: waiting for others; grey: something
+// is left today (pressing still works, after a check).
+function endDayButton() {
+  const s = state;
+  if (s.room.stage !== 'day') return null;
+  const { done, total } = goalProgress();
+  const left = done < total;
+  if (s.room.settings.solo) return { label: '밤으로', tone: left ? 'idle' : 'go' };
+  const me = s.players.find((p) => p.id === s.me.id);
+  const people = s.players.filter((p) => p.connected || p.id === s.me.id);
+  const ready = people.filter((p) => p.isHost || p.ready).length;
+  const count = `준비 ${ready}/${people.length}`;
+  if (!s.me.isHost) {
+    return me?.ready
+      ? { label: '준비함', sub: `${count} · 방장을 기다려요`, tone: 'wait', icon: 'check' }
+      : { label: '준비 완료', sub: count, tone: left ? 'idle' : 'go' };
+  }
+  return { label: '밤으로', sub: count, tone: left ? 'idle' : ready === people.length ? 'go' : 'wait' };
+}
+
+// the host pressed with someone not ready: a second press within a few seconds goes anyway
+let endDayAgainUntil = 0;
+async function endDay() {
+  const s = state;
+  if (!fieldMode() || s.room.stage !== 'day' || !$('modal').hidden) return;
+  if (!s.me.isHost) {
+    const wasReady = Boolean(s.players.find((p) => p.id === s.me.id)?.ready);
+    const res = await act('ready', { ready: !wasReady });
+    if (res.status === 200) toast(wasReady ? '준비를 취소했어요.' : '준비했어요. 방장이 밤으로 넘기면 함께 넘어가요.', wasReady ? 'info' : 'good');
+    return;
+  }
+  const waiting = s.room.settings.solo ? [] : s.players.filter((p) => !p.isHost && p.connected && !p.ready);
+  if (waiting.length && Date.now() > endDayAgainUntil) {
+    endDayAgainUntil = Date.now() + 6000;
+    toast(`아직 ${waiting.length}명이 준비하지 않았어요. 그래도 넘어가려면 한 번 더 누르세요.`, 'info');
+    return;
+  }
+  endDayAgainUntil = 0;
+  endDayAdvance(waiting.length ? { force: true } : {});
+}
+
+// Goals left today: say which, and what leaving them costs (the case's warning), before the night.
+async function endDayAdvance(flags) {
+  const res = await act('advance', flags, { quiet: true });
+  if (res.status === 200) return;
+  const err = res.body?.error;
+  if (err?.code === 'stage_warning') {
+    openModal(
+      h('h3', {}, `${state.room.day}일 차 낮을 마칠까요?`),
+      h('p', {}, '아직 하지 않은 목표가 있어요.'),
+      h('p', { class: 'endday-left' }, (err.warnings ?? [err.message]).map((w) => `✗ ${w}`).join('\n')),
+      h('div', { class: 'row end' },
+        h('button', { class: 'ghost', onclick: closeModal }, '조사 계속하기'),
+        h('button', { class: 'primary', onclick: () => (closeModal(), endDayAdvance({ ...flags, confirmWarnings: true })) }, '그래도 밤으로')),
+    );
+  } else if (err?.code === 'not_ready') {
+    advance(flags);
+  } else {
+    toast(errorText(res), 'error');
+  }
+}
+
 // Each confirmation adds its flag and retries, so a warning and missing readiness can both be confirmed.
 async function advance(flags = {}) {
   const res = await act('advance', flags, { quiet: true });
@@ -2745,6 +2810,7 @@ const hud = mountNoteUI($('hud'), {
   enabled: () => fieldMode() && !state.dialogue && !dialogueBox.isActive() && $('modal').hidden,
   onRender: renderNote,
   onPrompt: () => interact(),
+  onEndDay: () => endDay(),
   onToast(id) {
     if (dialogueBox.isActive()) dialogueBox.goPerson = id;
     else {
