@@ -143,9 +143,9 @@
     }
   };
   const db = {
-    saveRoom(room) {
+    saveRoom(room, state = JSON.stringify(room)) {
       const all = readStore();
-      all[room.id] = { id: room.id, code: room.code, state: JSON.stringify(room), created_at: room.createdAt };
+      all[room.id] = { id: room.id, code: room.code, state, created_at: room.createdAt };
       try {
         localStorage.setItem(STORE_KEY, JSON.stringify(all));
       } catch {

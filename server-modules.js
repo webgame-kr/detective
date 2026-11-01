@@ -357,7 +357,8 @@ class RoomManager {
 
   makeEntry(room) {
     // version counts every change sent to players; waiters are long-polls parked until the next one
-    return { room, caseDef: null, broken: null, caseError: null, streams: new Map(), moveBudget: new Map(), chatTimes: new Map(), recent: new Map(), hostTimer: null, dirty: false, version: 0, waiters: new Set() };
+    // savedState: the room as last written to the store (JSON), the way back after a failed move
+    return { room, caseDef: null, broken: null, caseError: null, streams: new Map(), moveBudget: new Map(), chatTimes: new Map(), recent: new Map(), hostTimer: null, dirty: false, version: 0, waiters: new Set(), savedState: null };
   }
 
   register(entry) {
@@ -376,6 +377,7 @@ class RoomManager {
         continue;
       }
       const entry = this.makeEntry(room);
+      entry.savedState = row.state;
       this.attachCase(entry);
       if (room.settings?.capacity === undefined) {
         room.settings = { ...settingsOf(room), capacity: room.settings?.solo ? 1 : defaultCapacity(entry.caseDef, room.order.length) };
@@ -415,7 +417,8 @@ class RoomManager {
 
   save(entry) {
     entry.room.updatedAt = nowIso();
-    this.db.saveRoom(entry.room);
+    entry.savedState = JSON.stringify(entry.room);
+    this.db.saveRoom(entry.room, entry.savedState);
     entry.dirty = false;
   }
 
@@ -774,12 +777,20 @@ class RoomManager {
 
     // Everything from here to the save runs synchronously, so two requests can never interleave
     // between a check and its write. On any error the room snapshot is put back untouched.
-    const snapshot = structuredClone(entry.room);
+    // Moves are most of the traffic and refuse only before they change anything (a wrong
+    // direction, too fast, not the day), so they skip the copy; a move that breaks part-way (a bug)
+    // puts the room back as it was last saved, and everyone is sent that.
+    const snapshot = body.type === 'move' ? null : structuredClone(entry.room);
     let outcome;
     try {
       outcome = this.dispatch(entry, pid, body);
     } catch (err) {
-      entry.room = snapshot;
+      if (snapshot) entry.room = snapshot;
+      else if (!(err instanceof AppError) && entry.savedState) {
+        entry.room = JSON.parse(entry.savedState);
+        this.log(`[room ${entry.room.code}] 이동 처리 중 오류로 마지막 저장 상태로 되돌렸어요: ${err.message}`);
+        this.broadcast(entry);
+      }
       throw err;
     }
     const { result, out } = outcome;
