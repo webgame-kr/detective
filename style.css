@@ -343,14 +343,6 @@ body[data-stage='night'] .stage-badge { background: var(--night); }
 .present summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
 .present-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .gain { background: var(--good-soft); border: 1px solid var(--good); padding: 10px 12px; }
-.toasts { position: fixed; top: 12px; right: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 40; max-width: min(360px, calc(100% - 32px)); }
-.toast { background: var(--ink); color: var(--panel); padding: 9px 12px; border-left: 4px solid var(--gold); box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2); transition: opacity 0.4s; font-size: 13px; }
-.toast.good { background: var(--good); color: #fff; }
-.toast.error { background: var(--bad); color: #fff; }
-.toast.notice { background: var(--accent); color: var(--onaccent); }
-.toast.out { opacity: 0; }
-.toast.badge-pop { display: flex; gap: 10px; align-items: center; background: var(--accent); color: var(--onaccent); animation: pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1); }
-.toast.badge-pop .clue { color: var(--ink); width: 120px; }
 @keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* dev */
@@ -401,7 +393,7 @@ body[data-stage='night'] .stage-badge { background: var(--night); }
 }
 @media (prefers-reduced-motion: reduce) {
   button, .button { transition: none; }
-  .clue-row .clue, .toast.badge-pop { animation: none; }
+  .clue-row .clue { animation: none; }
 }
 
 /* saves */

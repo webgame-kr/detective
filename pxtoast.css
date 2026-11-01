@@ -1,0 +1,97 @@
+/* Toasts as the HUD's pixel boxes (docs/pixel-toast-spec.md). The values are field.css's .nui
+   tokens, declared again here because #toasts sits outside .nui. Paper stays cream for every kind;
+   the kind shows only in the small icon cell. Off the day map (home, lobby, night board…) the box
+   keeps the out-game ink card, with the same icon cell and pixel font (6절, B안). */
+
+.toasts {
+  --t-ink: #2E2A24; --t-ink-muted: #4F473C; --t-shadow: #15161F;
+  --t-paper: #F3E9D2; --t-paper-hi: #FFF9E8; --t-paper-lo: #D8C9A6;
+  position: fixed; top: 12px; right: 16px; z-index: 40;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 12px;
+  width: min(360px, calc(100% - 32px)); box-sizing: border-box; padding: 3px 9px 9px 3px;
+  pointer-events: none;
+}
+.toasts > * { pointer-events: auto; }
+
+#toasts .toast {
+  --bg: var(--t-paper); --hi: var(--t-paper-hi); --lo: var(--t-paper-lo);
+  position: relative; box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px;
+  min-height: 48px; max-width: 100%; margin: 0; padding: 9px 15px 9px 9px;
+  background: var(--bg); color: var(--t-ink);
+  border: none; border-radius: 0;
+  /* outline drawn as four shadows so the corners stay clipped, 3px bevel, blur-free 6px drop */
+  box-shadow: 0 -3px 0 0 var(--t-ink), 0 3px 0 0 var(--t-ink), -3px 0 0 0 var(--t-ink), 3px 0 0 0 var(--t-ink),
+    inset 3px 3px 0 0 var(--hi), inset -3px -3px 0 0 var(--lo), 6px 6px 0 0 var(--t-shadow);
+  font-family: 'Galmuri14', 'Galmuri11', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace;
+  font-size: 15px; line-height: 21px; font-weight: 400; text-align: left;
+  -webkit-font-smoothing: none; font-smooth: never; word-break: keep-all; overflow-wrap: break-word;
+  opacity: 1; transform: none; transition: none;
+  animation: pxt-in 0.24s steps(4, end) both;
+}
+#toasts .toast.error { --bg: #F6E3D8; --hi: #FFF3EC; --lo: #D9B9A8; }
+#toasts .toast.out { animation: pxt-out 0.3s steps(3, end) both; }
+
+/* the kind: a small pixel box with a 12×12 dot icon */
+.toast__icon {
+  --ic: #C9A24A; --ic-hi: #EBD08A; --ic-lo: #8E6E2A;
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 3px;
+  background: var(--ic); color: var(--t-ink);
+  box-shadow: 0 -3px 0 0 var(--t-ink), 0 3px 0 0 var(--t-ink), -3px 0 0 0 var(--t-ink), 3px 0 0 0 var(--t-ink),
+    inset 3px 3px 0 0 var(--ic-hi), inset -3px -3px 0 0 var(--ic-lo);
+}
+.toast__icon svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: crispEdges; }
+.toast.good .toast__icon { --ic: #3E5E52; --ic-hi: #5C8072; --ic-lo: #2B443B; color: #F4EBD6; }
+.toast.notice .toast__icon { --ic: #9CABB9; --ic-hi: #CBD5DF; --ic-lo: #7D8C9A; }
+.toast.error .toast__icon { --ic: #A64A2E; --ic-hi: #C46A4C; --ic-lo: #7A3420; color: #F4EBD6; }
+.toast__text { flex: 1; min-width: 0; }
+
+/* the same toast again: one box with a count */
+.toast__count {
+  flex: none; align-self: center; margin: 3px 0 3px 3px; padding: 3px 6px;
+  background: #C9A24A; color: var(--t-ink);
+  box-shadow: 0 -3px 0 0 var(--t-ink), 0 3px 0 0 var(--t-ink), -3px 0 0 0 var(--t-ink), 3px 0 0 0 var(--t-ink),
+    inset 3px 3px 0 0 #EBD08A, inset -3px -3px 0 0 #8E6E2A;
+  font-family: 'Galmuri11', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace; font-size: 12px; line-height: 15px;
+}
+.toast__count[hidden] { display: none; }
+.toast__count.is-bump { animation: pxt-bump 0.15s steps(2, end) 1; }
+
+/* an error closes when pressed: the whole box is one button over the text. The #toasts id keeps
+   the out-game button look (a paper box of its own) off it and off the new-clue toast */
+#toasts .toast__hit { all: unset; position: absolute; inset: 0; display: block; cursor: pointer; }
+#toasts :focus-visible { outline: 3px solid #C9A24A; outline-offset: 3px; }
+
+/* a new clue: the card itself, on board-green paper, always on top; pressing opens it in the notebook */
+#toasts .toast.badge-pop { --bg: #DCE6CF; --hi: #EEF4E6; --lo: #93A584; order: -1; cursor: pointer; animation: pxt-drop 0.3s steps(3, end) both; }
+#toasts .toast.badge-pop.out { animation: pxt-out 0.3s steps(3, end) both; }
+#toasts .toast.badge-pop .clue { width: 120px; flex: none; color: var(--t-ink); }
+.toast.badge-pop strong { display: block; font-family: 'Galmuri11', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace; font-weight: 700; }
+.toast.badge-pop .small { font-size: 12px; line-height: 15px; color: var(--t-ink-muted); }
+
+@keyframes pxt-in { 0% { transform: translateX(36px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+@keyframes pxt-out { 0% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(18px); opacity: 0; } }
+@keyframes pxt-drop { 0% { transform: translateY(-9px); opacity: 0; } 60% { transform: translateY(3px); opacity: 1; } 100% { transform: translateY(0); opacity: 1; } }
+@keyframes pxt-bump { 0% { transform: translateY(-3px); } 100% { transform: translateY(0); } }
+
+/* where: on the day map beside the tab rail; on phones and low screens under the header and the HUD
+   corner, 92% wide; while someone talks, just above the dialogue box (game.js sets --dlg-top and
+   --hud-bottom), and on phones only the newest one there, so it never reaches the corner */
+body.field .toasts { top: 132px; right: 230px; }
+body.field.talking .toasts { top: auto; bottom: calc(100% - var(--dlg-top, 100%) + 6px); }
+@media (max-width: 760px), (max-height: 520px) {
+  body.field .toasts { top: max(84px, calc(var(--hud-bottom, 72px) + 12px)); right: 4vw; left: 4vw; width: auto; align-items: stretch; }
+  body.field.talking .toasts { top: auto; }
+  body.field.talking .toasts > .toast ~ .toast { display: none; }
+}
+@media (max-height: 520px) and (min-width: 600px) and (orientation: landscape) {
+  body.field .toasts { top: 6px; right: 66px; left: auto; width: min(360px, 50vw); align-items: flex-end; }
+}
+
+/* out of the day map: the ink card these screens use, no bevel */
+body.og:not(.field) #toasts .toast { box-shadow: 0 0 0 3px var(--og-ink, #2A2622), 6px 6px 0 0 var(--og-shadow, #12142A); }
+body.og:not(.field) #toasts .toast.error { box-shadow: 0 0 0 3px var(--og-ink, #2A2622), 6px 6px 0 0 var(--og-shadow, #12142A); }
+
+@media (prefers-reduced-motion: reduce) {
+  #toasts .toast, #toasts .toast.out, #toasts .toast.badge-pop, .toast__count.is-bump { animation: none; }
+}

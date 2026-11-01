@@ -1,6 +1,7 @@
 import { api, seats, h } from './net.js';
 import { caseFolder, caseSheet, icon, playersText, staticDrawers, DIFFICULTY } from './ui.js';
 import { officeCard } from './casebook.js';
+import { toast as showToast } from './toast.js';
 
 const $ = (id) => document.getElementById(id);
 let cases = [];
@@ -15,11 +16,8 @@ function settingsSummary() {
 }
 for (const id of ['roomDifficulty', 'roomCapacity', 'roomChat']) $(id).addEventListener('change', settingsSummary);
 
-function toast(text, kind = 'error') {
-  const el = h('div', { class: `toast ${kind}` }, text);
-  $('toasts').append(el);
-  setTimeout(() => el.remove(), 4000);
-}
+// failures from the server by default; things to fill in first pass 'info'
+const toast = (text, kind = 'error') => showToast(text, kind);
 
 function renderFolders() {
   if (!cases.length) {
@@ -88,7 +86,7 @@ $('createNick').addEventListener('input', () => {
 
 $('createForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!chosen) return toast('먼저 사건 파일을 골라 주세요.');
+  if (!chosen) return toast('먼저 사건 파일을 골라 주세요.', 'info');
   const nickname = $('createNick').value.trim();
   const settings = { chat: $('roomChat').checked, capacity: Number($('roomCapacity').value), difficulty: $('roomDifficulty').value };
   if ($('roomName').value.trim()) settings.name = $('roomName').value.trim();
@@ -102,7 +100,7 @@ $('soloBtn').addEventListener('click', async () => {
   const nickname = $('createNick').value.trim();
   if (!nickname) {
     $('createNick').focus();
-    return toast('닉네임을 먼저 적어 주세요.');
+    return toast('닉네임을 먼저 적어 주세요.', 'info');
   }
   const settings = { difficulty: $('roomDifficulty').value, ...($('roomName').value.trim() ? { name: $('roomName').value.trim() } : {}) };
   const res = await api('POST', '/api/rooms', { body: { nickname, caseId: chosen, settings, solo: true } });
@@ -147,7 +145,7 @@ $('loadSeat').addEventListener('change', () => {
 });
 $('loadForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!saveFile) return toast('저장 파일을 먼저 골라 주세요.');
+  if (!saveFile) return toast('저장 파일을 먼저 골라 주세요.', 'info');
   const nickname = $('loadNick').value.trim();
   const body = { nickname, file: saveFile };
   if (!$('loadSeatField').hidden) body.seatId = $('loadSeat').value;

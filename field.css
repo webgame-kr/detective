@@ -204,7 +204,6 @@ body.field .mapbar, body.field .map-prompt { display: none; }
 body.field .map-wrap { background: none; overflow: hidden; width: 100%; height: 100%; align-items: center; }
 body.field .map-wrap canvas { max-width: 100%; max-height: 100%; width: auto; height: auto; }
 body.field .dialogue-card, body.field .modal-card { font-family: 'Galmuri14', 'Galmuri11', 'Malgun Gothic', monospace; -webkit-font-smoothing: none; word-break: keep-all; border-radius: 0; }
-body.field .toasts { top: 132px; right: 230px; }
 
 /* narrow or short screens (phones, also in landscape): tabs become a bottom bar and the note
    takes the space above it */
@@ -224,7 +223,6 @@ body.field .toasts { top: 132px; right: 230px; }
   .nui-note { left: 9px; right: 9px; width: auto; top: 84px; bottom: 78px; max-height: none; padding: 30px 15px 18px 30px; }
   .nui-note::before { left: 15px; }
   .nui-prompt { bottom: 78px; }
-  body.field .toasts { top: 84px; right: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .nui .nui-tab { transition: none; }
@@ -601,7 +599,6 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
   .nui-note { top: 6px; bottom: 6px; left: auto; right: 66px; width: min(62vw, 560px); padding: 24px 12px 12px 24px; }
   .nui-note.nui-note--wide { top: 6px; bottom: 6px; left: 9px; right: 66px; width: auto; }
   .nui-prompt { bottom: 12px; }
-  body.field .toasts { top: 6px; right: 66px; }
   .nui .ig-toast { top: 6px; right: 66px; }
   .nui .ig-dialog { bottom: 6px; right: 66px; left: 6px; width: auto; transform: none; padding: 30px 15px 42px; }
   .nui .ig-portrait { width: 72px; height: 72px; top: -48px; }

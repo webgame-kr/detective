@@ -8,6 +8,7 @@ import { DialogueBox, portrait } from './dialogue.js';
 import { SPEED, savedSpeed, saveSpeed } from './typewriter.js';
 import { recordCase } from './casebook.js';
 import { briefingAnim } from './briefing-anim.js';
+import { toast, clueToast } from './toast.js';
 
 const code = location.hash.slice(1).toUpperCase(); // artifact: the room code rides in the hash
 const $ = (id) => document.getElementById(id);
@@ -57,18 +58,15 @@ const KEY_HELP = [
 
 // ---------- small helpers ----------
 
-function toast(text, kind = 'info') {
-  const el = h('div', { class: `toast ${kind}` }, text);
-  $('toasts').append(el);
-  setTimeout(() => el.classList.add('out'), 3800);
-  setTimeout(() => el.remove(), 4300);
-}
-
+// a new clue: pressing the toast opens that clue in my notebook
 function badgeToast(c) {
-  const el = h('div', { class: 'toast badge-pop' }, clueCard(c, { mini: true }), h('div', {}, h('strong', {}, '새 단서!'), h('div', { class: 'small' }, '내 수첩에 추가됐어요')));
-  $('toasts').append(el);
-  setTimeout(() => el.classList.add('out'), 3800);
-  setTimeout(() => el.remove(), 4300);
+  clueToast([clueCard(c, { mini: true }), h('div', {}, h('strong', {}, '새 단서!'), h('div', { class: 'small' }, '내 수첩에 추가됐어요'))], () => {
+    markSeen(c.id);
+    activeClue = c.id;
+    if (fieldMode() && !dialogueBox.isActive()) hud.open('notebook');
+    else if (!fieldMode()) tab = 'notebook';
+    render();
+  });
 }
 
 // Badges stay marked NEW until opened; remembered per tab so a reload keeps the marks.
@@ -749,6 +747,7 @@ function renderField() {
   const on = fieldMode();
   document.body.classList.toggle('field', on);
   $('hud').hidden = !on;
+  placeToasts();
   if (!on) {
     if (hud.current()) hud.close();
     return;
@@ -1484,7 +1483,7 @@ function finalView() {
   const complete = f.questions.every((q) => answers[q.id] && proofOk(q));
   const save = async (next) => {
     const res = await act('finalDraft', { baseRev: f.draft.rev, answers, evidence, ...next }, { quiet: true });
-    if (res.status === 409) toast('다른 사람이 먼저 답안을 바꿨어요. 최신 답안을 보여 드릴게요.', 'error');
+    if (res.status === 409) toast('다른 사람이 먼저 답안을 바꿨어요. 최신 답안을 보여 드릴게요.', 'notice');
     else if (res.status !== 200) toast(errorText(res), 'error');
   };
   const pick = (qid, oid) => save({ answers: { ...answers, [qid]: oid } });
@@ -2716,6 +2715,27 @@ const dialogueBox = new DialogueBox($('dialogue'), {
     }
   },
 });
+
+// While someone talks on the day map, toasts sit just above the dialogue box (pxtoast.css).
+// On phones they also start below the HUD corner (date, goal, and the minimap when unfolded).
+const toastWatch = new ResizeObserver(() => placeToasts());
+const watched = new Set();
+function placeToasts() {
+  const box = document.querySelector('#dialogue .ig-dialog');
+  const corner = document.querySelector('#hud .nui-corner');
+  for (const el of [box, corner]) {
+    if (el && !watched.has(el)) {
+      watched.add(el);
+      toastWatch.observe(el);
+    }
+  }
+  if (corner) document.body.style.setProperty('--hud-bottom', `${Math.round(corner.getBoundingClientRect().bottom)}px`);
+  const on = Boolean(box && !box.hidden && !$('dialogue').hidden && fieldMode());
+  document.body.classList.toggle('talking', on);
+  if (on) document.body.style.setProperty('--dlg-top', `${Math.round(box.getBoundingClientRect().top)}px`);
+}
+new MutationObserver(placeToasts).observe($('dialogue'), { attributes: true, attributeFilter: ['hidden'], subtree: true, childList: true });
+addEventListener('resize', placeToasts);
 
 const hud = mountNoteUI($('hud'), {
   enabled: () => fieldMode() && !state.dialogue && !dialogueBox.isActive() && $('modal').hidden,

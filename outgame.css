@@ -230,7 +230,6 @@ body.og:not(.field) .actionbar .muted { color: var(--og-on-ground); font-size: 1
 body.og:not(.field) .banner { margin: 3px 3px 24px; padding: 12px 18px; color: #6B2730; }
 body.og:not(.field) .modal { background: rgba(18, 20, 42, 0.6); }
 body.og:not(.field) .modal-card { padding: 27px; }
-body.og:not(.field) .toast { border-radius: 0; border: none; box-shadow: 0 0 0 3px var(--og-ink), 6px 6px 0 0 var(--og-shadow); font-family: var(--og-body); font-size: 15px; margin: 3px; }
 
 /* ---------- briefing: the intro as a story on lined paper ---------- */
 body.og:not(.field) .intro-sheet { max-width: none; padding: 42px 42px 42px 60px; background-color: var(--og-paper); background-image: repeating-linear-gradient(180deg, transparent 0 27px, #CFD8E2 27px 30px); background-position: 0 6px; }
