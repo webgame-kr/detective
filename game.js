@@ -338,6 +338,7 @@ const THEME_INTRO = {
   festival: '축제장에 불이 들어왔어요. 사건 소개를 읽어 주세요.',
   snow: '눈 덮인 저택의 문이 열렸어요. 사건 소개를 읽어 주세요.',
   radio: 'ON AIR 램프가 켜졌어요. 사건 소개를 읽어 주세요.',
+  masquerade: '샹들리에에 불이 들어왔어요. 사건 소개를 읽어 주세요.',
 };
 const SHIFT_TEXT = {
   intro: (d, theme) => ['CASE BRIEFING', '사건 소개', THEME_INTRO[theme] ?? '사건 파일이 열렸어요. 사건 소개를 읽어 주세요.'],

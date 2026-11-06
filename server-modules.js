@@ -6628,7 +6628,7 @@ const META_FIELDS = {
   cover: f.str(80, true),
   solo: f.bool(true),
   // the look of the day-change card: a train on a rail, a star chart, a string of lanterns, footprints in snow
-  theme: f.oneOf(['train', 'stars', 'festival', 'snow', 'radio', 'film'], true),
+  theme: f.oneOf(['train', 'stars', 'festival', 'snow', 'radio', 'film', 'masquerade'], true),
   // a line for the day-change card of each day and night, five each
   stageCards: f.any(true),
   // play time when one person plays alone (walking every room yourself takes longer)

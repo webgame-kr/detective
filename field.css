@@ -349,6 +349,29 @@ body.field .dialogue-card, body.field .modal-card { font-family: 'Galmuri14', 'G
 .stage-shift[data-theme='radio'] .shift-train { top: 12px; width: 15px; height: 15px; margin-left: -7px; border-radius: 50%; background: #C9C3B0; box-shadow: 0 0 0 3px var(--ink), inset 0 0 0 4px #5A3A2A; }
 .stage-shift.play[data-theme='radio'] .shift-stop.is-now { animation: shift-onair 0.6s 1.3s steps(2, end) 3 both; }
 @keyframes shift-onair { 50% { background: #5A3440; } }
+/* masquerade: a harlequin ballroom; a silver fox mask comes down on a gold ribbon and glides to the
+   day, past masks hung on the ribbon (gold for the days gone, silver for today) */
+.stage-shift[data-theme='masquerade'] { background-color: rgba(36, 16, 32, 0.93); background-image: linear-gradient(45deg, rgba(201, 162, 74, 0.07) 25%, transparent 25%, transparent 75%, rgba(201, 162, 74, 0.07) 75%), linear-gradient(45deg, rgba(201, 162, 74, 0.07) 25%, transparent 25%, transparent 75%, rgba(201, 162, 74, 0.07) 75%); background-size: 24px 24px; background-position: 0 0, 12px 12px; }
+.stage-shift[data-theme='masquerade'] .shift-card::before { background: #C9A24A; box-shadow: inset 0 -3px 0 0 #8A3B6A; }
+.stage-shift[data-theme='masquerade'][data-stage='night'] .shift-card { --paper: #3A2440; --paper-hi: #4E3258; --paper-lo: #2A1830; }
+.stage-shift[data-theme='masquerade'][data-stage='night'] .shift-card::before { background: #B8BCC8; box-shadow: inset 0 -3px 0 0 #6A4A7A; }
+.stage-shift[data-theme='masquerade'][data-stage='final'] .shift-card::before, .stage-shift[data-theme='masquerade'][data-stage='intro'] .shift-card::before { background: #8A3B6A; box-shadow: inset 0 -3px 0 0 #C9A24A; }
+.stage-shift[data-theme='masquerade'] .shift-rail::before { height: 3px; top: 12px; background: #C9A24A; box-shadow: none; }
+.stage-shift[data-theme='masquerade'] .shift-stop { top: 18px; width: 18px; height: 9px; margin-left: -9px; background: #5A3A52; }
+.stage-shift[data-theme='masquerade'] .shift-stop::before { content: ''; position: absolute; left: 3px; top: 3px; width: 3px; height: 3px; background: var(--ink); box-shadow: 9px 0 0 0 var(--ink); }
+.stage-shift[data-theme='masquerade'] .shift-stop::after { content: ''; position: absolute; left: 7px; top: -6px; width: 3px; height: 6px; background: #C9A24A; }
+.stage-shift[data-theme='masquerade'] .shift-stop.is-past { background: #C9A24A; }
+.stage-shift[data-theme='masquerade'] .shift-stop.is-now { background: #E2E4EA; box-shadow: 0 0 0 3px var(--ink), 0 0 0 9px rgba(226, 228, 234, 0.3); }
+.stage-shift[data-theme='masquerade'] .shift-train { top: 21px; width: 27px; height: 12px; margin-left: -13px; background: #D8DCE6; box-shadow: 0 0 0 3px var(--ink), inset 0 -3px 0 0 #9AA0AC, inset 3px 0 0 0 #F6F8FC; }
+.stage-shift[data-theme='masquerade'] .shift-train::before, .stage-shift[data-theme='masquerade'] .shift-train::after { content: ''; position: absolute; top: -9px; bottom: auto; width: 6px; height: 6px; background: #D8DCE6; box-shadow: 0 0 0 3px var(--ink); }
+.stage-shift[data-theme='masquerade'] .shift-train::before { left: 0; }
+.stage-shift[data-theme='masquerade'] .shift-train::after { right: 0; left: auto; }
+.stage-shift[data-theme='masquerade'] .shift-train i { display: block; top: 3px; left: 5px; width: 6px; height: 3px; background: var(--ink); box-shadow: 11px 0 0 0 var(--ink); }
+.stage-shift.play[data-theme='masquerade'] .shift-train { animation: masq-descend 0.48s 0.12s steps(6, end) both, shift-ride 0.9s 0.62s steps(10, end) both; }
+.stage-shift.play[data-theme='masquerade'] .shift-stop.is-now { animation: masq-glint 0.5s 1.5s steps(2, end) 3 both; }
+@keyframes masq-descend { 0% { transform: translateY(-48px); opacity: 0; } 20% { opacity: 1; } 70% { transform: translateY(3px); } 100% { transform: none; opacity: 1; } }
+@keyframes masq-glint { 50% { background: #F6F8FC; box-shadow: 0 0 0 3px var(--ink), 0 0 0 12px rgba(246, 248, 252, 0.45); } }
+@media (prefers-reduced-motion: reduce) { .stage-shift.play[data-theme='masquerade'] .shift-train, .stage-shift.play[data-theme='masquerade'] .shift-stop.is-now { animation: none; } }
 @media (max-width: 640px) { .shift-title { font-size: 36px; line-height: 42px; } .shift-card { padding: 24px 18px 27px; } }
 @media (prefers-reduced-motion: reduce) {
   .stage-shift.play, .stage-shift.play .shift-card, .stage-shift.play .shift-title, .stage-shift.play .shift-train, .stage-shift.play .shift-stop { animation: none !important; }
