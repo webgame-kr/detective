@@ -94,7 +94,8 @@ function markSeen(id) {
 }
 
 const errorText = (res) => res.body?.error?.message ?? '요청을 처리하지 못했어요.';
-const playerName = (id) => state.players.find((p) => p.id === id)?.nickname ?? (id ? '알 수 없음' : '사건 기록');
+// someone who left for good (퇴장) still signs the cards and notes they left behind
+const playerName = (id) => (state.players.find((p) => p.id === id) ?? state.leftPlayers?.find((p) => p.id === id))?.nickname ?? (id ? '알 수 없음' : '사건 기록');
 const kindLabel = (kind) => (kind === 'testimony' ? '증언' : kind === 'deduction' ? '추론' : '증거');
 
 function ago(iso) {
@@ -557,69 +558,226 @@ function releaseKeyword(d) {
   seenRecords.held.delete(key);
 }
 
-// Where each met character sits on the board: four on top, four below, fixed by case order, so
-// no line between two people has to cross the centre box.
+// Where each met character sits on the board until the player moves them: four on top, four below,
+// fixed by case order. A dragged person keeps their place (people[id].pos on the server, private).
 const SLOTS = [[93, 108], [279, 108], [465, 108], [651, 108], [93, 444], [279, 444], [465, 444], [651, 444]];
 const CENTER = [372, 300];
+const PP_W = 744;
+// a node's box around its (x, y): the portrait's centre is (x, y), the name plate ends 81 below
+const NODE = { left: 45, right: 45, top: 45, bottom: 81 };
+const CENTER_BOX = { left: 66, right: 66, top: 30, bottom: 30 };
+// the same bounds the server checks (engine/people.js PLACE): the whole node stays on the board
+const PLACE = { minX: 45, maxX: 699, minY: 45, maxY: 489 };
+const DRAG_START = 6; // px of movement before a press becomes a drag; less is a click
+const KEY_STEP = 12;
+// positions moved here and not yet confirmed by a view, so a late view never snaps a node back
+const ppLocal = new Map();
+let ppDrag = null; // the drag in progress: the note is not redrawn under it
+let ppFocus = null; // the node moved with the keyboard keeps focus across redraws
+const ppSaveTimers = new Map();
+const clampTo = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function peoplePositions(pv) {
+  return new Map(pv.cast.map((c, i) => {
+    const local = ppLocal.get(c.id);
+    if (local && c.pos && c.pos.x === local[0] && c.pos.y === local[1]) ppLocal.delete(c.id);
+    return [c.id, ppLocal.get(c.id) ?? (c.pos ? [c.pos.x, c.pos.y] : SLOTS[c.slot % SLOTS.length] ?? SLOTS[i])];
+  }));
+}
+
+function savePlace(id, [x, y], delay = 0) {
+  clearTimeout(ppSaveTimers.get(id));
+  ppSaveTimers.set(id, setTimeout(async () => {
+    ppSaveTimers.delete(id);
+    const res = await act('personPlace', { characterId: id, x, y }, { quiet: true });
+    if (res.status === 200) return;
+    toast(errorText(res), 'error');
+    ppLocal.delete(id);
+    hud.rerender();
+  }, delay));
+}
 
 function peopleNoteView() {
   const pv = state.people ?? { cast: [], unmet: 0, links: [], guesses: [] };
   if (!pv.cast.length) return h('p', { class: 'ig-empty' }, '아직 이야기를 나눈 인물이 없어요. 맵에서 인물에게 다가가 E로 말을 걸어 보세요.');
   if (!pv.cast.some((c) => c.id === selectedPerson)) selectedPerson = pv.cast[0].id;
-  const pos = new Map(pv.cast.map((c, i) => [c.id, SLOTS[c.slot % SLOTS.length] ?? SLOTS[i]]));
+  const pos = peoplePositions(pv);
   const pick = (id) => {
     selectedPerson = id;
     hud.rerender();
   };
+  const lines = [...pv.links.map((l) => ({ ...l, kind: 'confirmed' })), ...pv.guesses.map((g) => ({ ...g, kind: 'guess' }))];
+  const linkLayer = h('div', { class: 'pp-links', 'aria-hidden': 'true' }, ...lines.flatMap((l) => routeLink(l, pos)));
+  // while dragging only the dragged node and the lines change, once a frame at most
+  let frame = 0;
+  const redrawLinks = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      linkLayer.replaceChildren(...lines.flatMap((l) => routeLink(l, pos)));
+    });
+  };
+  const moveNode = (id, node, x, y) => {
+    const at = [clampTo(Math.round(x), PLACE.minX, PLACE.maxX), clampTo(Math.round(y), PLACE.minY, PLACE.maxY)];
+    pos.set(id, at);
+    ppLocal.set(id, at);
+    node.style.left = `${at[0]}px`;
+    node.style.top = `${at[1] - NODE.top}px`;
+    redrawLinks();
+    return at;
+  };
+  const startDrag = (e, id, node) => {
+    if (e.button !== 0 || ppDrag) return;
+    const rect = node.parentElement.getBoundingClientRect();
+    const scale = rect.width / PP_W || 1;
+    const [x0, y0] = pos.get(id);
+    const drag = { id, sx: e.clientX, sy: e.clientY, moved: false, at: null };
+    ppDrag = drag;
+    node.setPointerCapture?.(e.pointerId);
+    const move = (ev) => {
+      const dx = (ev.clientX - drag.sx) / scale;
+      const dy = (ev.clientY - drag.sy) / scale;
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_START) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        node.classList.add('is-dragging');
+      }
+      ev.preventDefault();
+      drag.at = moveNode(id, node, x0 + dx, y0 + dy);
+    };
+    const end = () => {
+      node.removeEventListener('pointermove', move);
+      node.removeEventListener('pointerup', end);
+      node.removeEventListener('pointercancel', end);
+      node.classList.remove('is-dragging');
+      ppDrag = null;
+      if (!drag.moved) return;
+      node.dataset.draggedAt = String(Date.now()); // the click that follows a drag does not select
+      savePlace(id, drag.at);
+    };
+    node.addEventListener('pointermove', move);
+    node.addEventListener('pointerup', end);
+    node.addEventListener('pointercancel', end);
+  };
+  const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const keyMove = (e, id, node) => {
+    const d = ARROWS[e.key];
+    if (!d || !e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ppFocus = id;
+    const [x, y] = pos.get(id);
+    savePlace(id, moveNode(id, node, x + d[0] * KEY_STEP, y + d[1] * KEY_STEP), 350);
+  };
+  const moved = pv.cast.some((c) => c.pos) || ppLocal.size > 0;
+  const reset = async () => {
+    for (const t of ppSaveTimers.values()) clearTimeout(t);
+    ppSaveTimers.clear();
+    ppLocal.clear();
+    const res = await act('personPlace', { reset: true });
+    if (res.status === 200) hud.rerender();
+  };
   return h('div', { class: 'pp' },
     h('div', { class: 'pp-boardcol' },
       h('div', { class: 'pp-board' },
-        ...[...pv.links.map((l) => ({ ...l, kind: 'confirmed' })), ...pv.guesses.map((g) => ({ ...g, kind: 'guess' }))].flatMap((l) => routeLink(l, pos)),
+        linkLayer,
         h('span', { class: 'px drop pp-center', style: `left:${CENTER[0]}px;top:${CENTER[1]}px` }, solo() ? '나의 수사' : '우리 기록단'),
         ...pv.cast.map((c) => {
           const [x, y] = pos.get(c.id);
-          return h('button', { type: 'button', class: 'pp-node', 'aria-pressed': c.id === selectedPerson ? 'true' : 'false', style: `left:${x}px;top:${y - 45}px`, onclick: () => pick(c.id) },
-            h('span', { class: 'px drop pp-node__frame' }, portrait(c.portrait, 78)),
-            h('span', { class: 'px pp-node__name' }, c.name, c.starred ? h('span', { class: 'pp-star', 'aria-label': '주목' }, '★') : null));
+          const node = h('button', {
+            type: 'button',
+            class: 'pp-node',
+            'data-person': c.id,
+            'aria-pressed': c.id === selectedPerson ? 'true' : 'false',
+            'aria-label': `${c.name}${c.starred ? ' (주목)' : ''} · Alt+방향키로 옮기기`,
+            style: `left:${x}px;top:${y - NODE.top}px`,
+            onclick: () => {
+              if (Date.now() - Number(node.dataset.draggedAt ?? 0) < 400) return;
+              pick(c.id);
+            },
+            onpointerdown: (e) => startDrag(e, c.id, node),
+            onkeydown: (e) => keyMove(e, c.id, node),
+            onfocusout: (e) => {
+              if (e.relatedTarget && ppFocus === c.id) ppFocus = null;
+            },
+          },
+          h('span', { class: 'px drop pp-node__frame' }, portrait(c.portrait, 78)),
+          h('span', { class: 'px pp-node__name' }, c.name, c.starred ? h('span', { class: 'pp-star', 'aria-label': '주목' }, '★') : null));
+          // after renderInto has put the new note in place
+          if (ppFocus === c.id) queueMicrotask(() => {
+            if (node.isConnected && (document.activeElement === document.body || !document.activeElement)) node.focus({ preventScroll: true });
+          });
+          return node;
         })),
+      h('div', { class: 'pp-tools' },
+        h('span', { class: 'pp-tools__hint' }, '인물을 끌어서 옮길 수 있어요 · 선택한 뒤 Alt+방향키'),
+        h('button', { type: 'button', class: 'px pp-reset', disabled: !moved, onclick: reset }, '처음 배치로')),
       h('div', { class: 'pp-unmet' }, h('span', {}, '아직 만나지 않은 인물'), ...Array.from({ length: pv.unmet }, () => h('span', { class: 'px pp-unmet__slot', 'aria-hidden': 'true' }, '?')))),
     personCard(pv, pv.cast.find((c) => c.id === selectedPerson)));
 }
 
-// Lines only bend at right angles: above the centre go across then down, below go down then across.
+// A box around a point: a person's node, or the centre plate.
+const boxAt = ([x, y], b) => ({ x, y, l: x - b.left, r: x + b.right, t: y - b.top, b: y + b.bottom });
+
+// Lines only bend at right angles and run from box edge to box edge. Side by side (the boxes share
+// a band across): one straight line. One above the other: one straight line down. Otherwise across
+// from the first box's side at its centre height, then down or up into the second box's edge.
 function routeLink(l, pos) {
-  const seg = (x, y, w, hgt, dir) => h('span', { class: `pp-seg${l.kind === 'guess' ? ` pp-seg--guess is-${dir}` : ''}`, 'aria-hidden': 'true', style: `left:${x}px;top:${y}px;width:${w}px;height:${hgt}px` });
+  const seg = (x, y, w, hgt, dir) => h('span', { class: `pp-seg${l.kind === 'guess' ? ` pp-seg--guess is-${dir}` : ''}`, style: `left:${x}px;top:${y}px;width:${w}px;height:${hgt}px` });
   const H = (x1, x2, y) => seg(Math.min(x1, x2), y - 1, Math.abs(x2 - x1), 3, 'h');
   const V = (x, y1, y2) => seg(x - 1, Math.min(y1, y2), 3, Math.abs(y2 - y1), 'v');
   const tag = (x, y) => h('span', { class: `px pp-linktag${l.kind === 'guess' ? ' pp-linktag--guess' : ''}`, style: `left:${x}px;top:${y}px` }, l.label, l.kind === 'guess' ? '?' : '');
-  const b = pos.get(l.b);
-  if (!b) return [];
-  const [bx, by] = b;
-  if (l.a === 'me') {
-    const [cx, cy] = CENTER;
-    if (by < cy) {
-      const sx = bx < cx ? cx - 66 : bx > cx ? cx + 66 : cx;
-      return sx === cx ? [V(cx, cy - 30, by + 81), tag(cx, (cy - 30 + by + 81) / 2)] : [H(sx, bx, cy), V(bx, cy, by + 81), tag((sx + bx) / 2, cy)];
-    }
-    if (Math.abs(by - cy) < 10) {
-      const ex = bx < cx ? bx + 45 : bx - 45;
-      const sx = bx < cx ? cx - 66 : cx + 66;
-      return [H(sx, ex, cy), tag((sx + ex) / 2, cy)];
-    }
-    const ex = bx < cx ? bx + 45 : bx > cx ? bx - 45 : bx;
-    return [V(cx, cy + 30, by), H(cx, ex, by), tag(cx, (cy + 30 + by) / 2)];
+  const bp = pos.get(l.b);
+  const ap = l.a === 'me' ? CENTER : pos.get(l.a);
+  if (!bp || !ap) return [];
+  const A = boxAt(ap, l.a === 'me' ? CENTER_BOX : NODE);
+  const B = boxAt(bp, NODE);
+  const MIN_SHARE = 8;
+  // the label goes on the first spot along the line that no box covers (the centre plate, a person)
+  const boxes = [boxAt(CENTER, CENTER_BOX), ...[...pos.values()].map((p) => boxAt(p, NODE))];
+  const clear = ([x, y]) => !boxes.some((b) => x > b.l - 30 && x < b.r + 30 && y > b.t - 12 && y < b.b + 12);
+  const along = (x1, y1, x2, y2) => [0.5, 0.3, 0.7].map((t) => [x1 + (x2 - x1) * t, y1 + (y2 - y1) * t]);
+  const label = (...spots) => {
+    const at = spots.find(clear) ?? spots[0];
+    return tag(at[0], at[1]);
+  };
+  // side by side
+  const top = Math.max(A.t, B.t);
+  const bottom = Math.min(A.b, B.b);
+  if (bottom - top >= MIN_SHARE && (A.r <= B.l || B.r <= A.l)) {
+    // stay on the portraits' height when both can, else the middle of the shared band
+    const y = Math.abs(A.y - B.y) < 1 ? A.y : clampTo((A.y + B.y) / 2, top + 4, bottom - 4);
+    const [x1, x2] = A.r <= B.l ? [A.r, B.l] : [A.l, B.r];
+    return [H(x1, x2, y), label(...along(x1, y, x2, y))];
   }
-  const a = pos.get(l.a);
-  if (!a) return [];
-  const [ax, ay] = a;
-  if (Math.abs(ay - by) < 10) {
-    const x1 = ax < bx ? ax + 45 : ax - 45;
-    const x2 = ax < bx ? bx - 45 : bx + 45;
-    return [H(x1, x2, ay), tag((x1 + x2) / 2, ay)];
+  // one above the other
+  const left = Math.max(A.l, B.l);
+  const right = Math.min(A.r, B.r);
+  if (right - left >= MIN_SHARE && (A.b <= B.t || B.b <= A.t)) {
+    const x = clampTo((A.x + B.x) / 2, left + 4, right - 4);
+    const [y1, y2] = A.b <= B.t ? [A.b, B.t] : [A.t, B.b];
+    return [V(x, y1, y2), label(...along(x, y1, x, y2))];
   }
-  const hx = ax < bx ? ax + 45 : ax - 45;
-  const vy = ay < by ? by - 45 : by + 81;
-  return [H(hx, bx, ay), V(bx, ay, vy), tag((hx + bx) / 2, ay)];
+  // diagonal, side by side: across at A's height to B's middle, then into B from above or below
+  if (A.r <= B.l || B.r <= A.l) {
+    const sx = B.x > A.x ? A.r : A.l;
+    const ey = B.y > A.y ? B.t : B.b;
+    const across = along(sx, A.y, B.x, A.y);
+    const down = along(B.x, A.y, B.x, ey);
+    const spots = Math.abs(B.x - sx) >= Math.abs(ey - A.y) ? [...across, ...down] : [...down, ...across];
+    return [H(sx, B.x, A.y), V(B.x, A.y, ey), label(...spots)];
+  }
+  // diagonal, one above the other (barely overlapping across): down from A, then across into B's side
+  if (A.b <= B.t || B.b <= A.t) {
+    const sy = B.y > A.y ? A.b : A.t;
+    const ex = B.x > A.x ? B.l : B.r;
+    const down = along(A.x, sy, A.x, B.y);
+    const across = along(A.x, B.y, ex, B.y);
+    const spots = Math.abs(B.y - sy) >= Math.abs(ex - A.x) ? [...down, ...across] : [...across, ...down];
+    return [V(A.x, sy, B.y), H(A.x, ex, B.y), label(...spots)];
+  }
+  // the boxes overlap (a node dropped onto another): a short line between the centres
+  return [H(A.x, B.x, A.y), V(B.x, A.y, B.y), tag((A.x + B.x) / 2, A.y)];
 }
 
 function personCard(pv, c) {
@@ -829,10 +987,12 @@ function renderNote(id, body) {
     people: [[s.people, selectedPerson, guessFrom], peopleNoteView],
     board: [[s.board, s.players, minute], () => boardView({})],
     brief: [[s.room, s.players, s.me, s.goals, s.summary, hintsOn], briefView],
-    party: [[s.players, s.me, s.room.stage, s.characters], () => [playersView(), s.characters?.length ? [h('h3', {}, '만난 인물'), peopleView()] : null]],
-    menu: [[s.room.saves, s.room.stage, s.me.isHost, s.notices, minute, textSpeed, touchpadMode, hintsOn, hudLook, a11y.text, a11y.pictures], () => [settingsView(), savesView(), h('h3', {}, '알림'), noticesView()]],
+    party: [[s.players, s.leftPlayers, s.me, s.room.stage, s.characters], () => [playersView(), s.characters?.length ? [h('h3', {}, '만난 인물'), peopleView()] : null]],
+    menu: [[s.room.saves, s.room.stage, s.me.isHost, s.players.length, s.notices, minute, textSpeed, touchpadMode, hintsOn, hudLook, a11y.text, a11y.pictures], () => [settingsView(), savesView(), h('h3', {}, '알림'), noticesView()]],
   };
   const [key, build] = notes[id];
+  // a person being dragged on the relationship map is not redrawn out from under the pointer
+  if (id === 'people' && ppDrag) return;
   renderInto(body, `${id}:${JSON.stringify(key)}`, build);
 }
 
@@ -1382,7 +1542,8 @@ function lobbyView() {
     h('div', { class: 'seat-tags' },
       p.isHost ? h('span', { class: 'tag tag--brass' }, '방장') : h('span', { class: `tag ${p.ready ? 'tag--teal-l' : 'tag--paper2'}` }, p.ready ? '준비 완료' : '준비 전'),
       p.team && teamName(p.team) ? h('span', { class: 'tag tag--sky' }, teamName(p.team)) : null,
-      p.connected ? null : h('span', { class: 'tag tag--rose' }, '연결 끊김')));
+      p.connected ? null : h('span', { class: 'tag tag--rose' }, '연결 끊김')),
+    p.id === s.me.id ? h('button', { type: 'button', class: 'small ghost seat-leave', onclick: leaveForGood }, '방 나가기') : null);
   // while friends can still come in, an empty seat hands out the invite link
   const open = !s.room.settings.solo && !s.room.settings.locked;
   const emptySeat = (name) => h(open ? 'button' : 'div', { class: 'seat empty', ...(open ? { type: 'button', onclick: () => invite(link), title: '초대 링크 복사' } : {}) },
@@ -1789,7 +1950,7 @@ function renderTabs() {
   const names = { players: '참가자', notebook: '내 수첩', board: '공동 보드', people: '인물', saves: '설정·저장', notices: '알림' };
   renderInto($('tabs'), JSON.stringify([visibleTabs(), tab]), () => visibleTabs().map((t) => h('button', { class: t === tab ? 'active' : '', 'aria-pressed': t === tab ? 'true' : 'false', onclick: () => ((tab = t), render()) }, names[t])));
   const body = $('tabBody');
-  if (tab === 'players') renderInto(body, JSON.stringify([state.players, state.me, state.room.stage]), playersView);
+  if (tab === 'players') renderInto(body, JSON.stringify([state.players, state.leftPlayers, state.me, state.room.stage]), playersView);
   if (tab === 'notebook') renderInto(body, JSON.stringify([state.notebook, notebookTab, activeClue, state.hints, hintsOn]), notebookView);
   if (tab === 'board') renderInto(body, JSON.stringify([state.board, state.players, Math.floor(Date.now() / 60000)]), () => boardView({}));
   if (tab === 'notices') renderInto(body, JSON.stringify(state.notices), noticesView);
@@ -1808,7 +1969,11 @@ function playersView() {
         p.ready ? ' · 준비 완료' : '',
         p.locationName ? ` · ${p.locationName}` : '')),
     s.me.isHost && p.id !== s.me.id && p.connected ? h('button', { class: 'small ghost', onclick: () => confirmModal('방장 넘기기', `${p.nickname}님에게 방장을 넘길까요?`, '넘기기', () => act('transferHost', { playerId: p.id })) }, '방장 넘기기') : null,
-    s.me.isHost && s.room.stage === 'lobby' && !p.connected ? h('button', { class: 'small ghost', onclick: () => act('kick', { playerId: p.id }) }, '내보내기') : null)),
+    s.me.isHost && s.room.stage === 'lobby' && !p.connected ? h('button', { class: 'small ghost', onclick: () => act('kick', { playerId: p.id }) }, '내보내기') : null,
+    s.room.stage === 'lobby' && p.id === s.me.id ? h('button', { class: 'small ghost', onclick: leaveForGood }, '방 나가기') : null)),
+    ...(s.leftPlayers ?? []).map((p) => h('li', { class: 'player-left' },
+      h('span', { class: 'avatar-slot', style: `border-color:${p.color}` }, lookThumb(p.avatar, 1) ?? h('span', { class: 'dot', style: `background:${p.color}` })),
+      h('div', { class: 'grow' }, h('div', {}, h('strong', {}, p.nickname), h('span', { class: 'chip' }, '퇴장')), h('div', { class: 'muted small' }, '방을 떠났어요. 남긴 단서와 메모는 그대로예요.')))),
     h('li', { class: 'muted small aside' }, '방장의 연결이 30초 넘게 끊기면 먼저 들어온 연결된 참가자가 방장이 돼요.'));
 }
 
@@ -2193,6 +2358,7 @@ function savesView() {
   const remove = (x) => confirmModal('저장 지우기', `‘${x.name}’ 저장을 지울까요?`, '지우기', () => act('deleteSave', { saveId: x.id }));
   return [
     leaveView(canSave),
+    leaveForGoodView(),
     h('div', { class: 'notebook-title' }, h('h3', {}, '저장'), h('span', { class: 'muted small' }, `직접 저장 ${state.room.saves.filter((x) => !x.auto && !x.exit).length}/5`)),
     isHost && canSave
       ? h('form', { class: 'save-form', onsubmit: save }, name, h('button', { class: 'primary', type: 'submit' }, '지금 저장'))
@@ -2238,6 +2404,38 @@ function leaveView(canSave) {
     h('span', { class: 'tag tag--brass-l' }, '나가기'),
     h('p', { class: 'small' }, isHost && canSave ? '저장한 뒤 나가요. 다시 들어오면 그 자리에서 이어 해요.' : '방은 그대로 남아요. 다시 들어오면 이어서 할 수 있어요.'),
     h('button', { class: 'full primary', onclick: ask }, isHost && canSave ? '저장하고 나가기' : '나가기'));
+}
+
+// 퇴장: leaving the room for good, unlike 나가기 above. The seat goes, clues only I hold go onto the
+// board, the host role passes on, and the last one out takes the room with them.
+function leaveForGoodView() {
+  const alone = !state.players.some((p) => p.id !== state.me.id);
+  return h('div', { class: 'save-file leave-box' },
+    h('span', { class: 'tag tag--rose' }, '퇴장'),
+    h('p', { class: 'small' }, alone ? '이 방을 완전히 떠나요. 남은 사람이 없어서 방이 삭제돼요.' : '이 방을 완전히 떠나요. 다시 들어올 수 없고, 나만 가진 단서는 공동 보드에 남아요.'),
+    h('button', { class: 'full danger', onclick: leaveForGood }, '퇴장하기'));
+}
+
+function leaveForGood() {
+  const s = state;
+  const lobby = s.room.stage === 'lobby';
+  const others = s.players.filter((p) => p.id !== s.me.id);
+  const next = others.find((p) => p.connected) ?? others[0];
+  const mine = (s.notebook?.clues ?? []).filter((c) => !c.shared).length;
+  confirmModal(lobby ? '방에서 나갈까요?' : '퇴장할까요?', h('div', {},
+    h('p', {}, lobby
+      ? '내 자리를 비우고 처음 화면으로 나가요. 다시 오려면 초대 링크로 새로 참가해야 해요.'
+      : '이 방을 완전히 떠나요. ‘나가기’와 달리 되돌릴 수 없고, 이 자리로 다시 들어올 수 없어요.'),
+    !lobby && others.length ? h('p', { class: 'small' }, mine ? `아직 공유하지 않은 단서 ${mine}장 가운데 나만 가진 것은 공동 보드에 남겨요. 내 수첩의 나머지 기록은 아무에게도 보이지 않아요.` : '내 수첩은 아무에게도 보이지 않아요.') : null,
+    s.me.isHost && next ? h('p', { class: 'small' }, `방장은 ${next.nickname}님에게 넘어가요.`) : null,
+    others.length ? null : h('p', { class: 'warn' }, s.room.settings.solo ? '혼자 하는 방이라 퇴장하면 방이 삭제돼요. 나중에 이어 하려면 먼저 저장 파일을 내려받아 두세요.' : '남은 사람이 없어서 퇴장하면 방이 삭제돼요.'),
+    !lobby && others.length ? h('p', { class: 'warn' }, '되돌릴 수 없어요.') : null), lobby ? '방 나가기' : '퇴장하기', async () => {
+    const res = await act('leave', {}, { quiet: true });
+    if (res.status !== 200) return toast(errorText(res), 'error');
+    conn.stop();
+    seats.forget(code, conn.token);
+    location.hash = '';
+  });
 }
 
 // The host deletes the room for everyone. Offers the save file first while a game is running.

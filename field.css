@@ -485,6 +485,20 @@ body.field .nui-prompt { display: none; }
 .nui-note__body .pp-node { position: absolute; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 0; margin: 0; min-height: 0; border: none; background: none; box-shadow: none; font-family: var(--font-label); color: var(--n-ink); cursor: pointer; }
 .nui .pp-node__frame { display: inline-block; padding: 6px; --bg: var(--brass); --hi: #EBD08A; --lo: #8E6E2A; }
 .pp-node[aria-pressed='true'] .pp-node__frame { outline: 3px solid #B8464F; outline-offset: 3px; }
+/* the relationship map: people can be dragged (pointer) or moved with Alt+arrows */
+.pp-links { position: absolute; inset: 0; pointer-events: none; }
+.nui-note__body .pp-node { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.nui-note__body .pp-node.is-dragging { cursor: grabbing; z-index: 2; }
+.pp-node__frame { transition: transform 0.12s ease-out; }
+.pp-node.is-dragging .pp-node__frame { transform: translateY(-3px); }
+.pp-node:focus-visible .pp-node__name { outline: 3px solid #2B443B; outline-offset: 2px; }
+.pp-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink-muted); }
+.nui-note__body .pp-reset { height: 36px; min-height: 36px; padding: 0 12px; font-family: var(--font-label); font-size: 12px; }
+.nui-note__body .pp-reset:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .pp-node__frame { transition: none; }
+  .pp-node.is-dragging .pp-node__frame { transform: none; }
+}
 .nui .pp-node__name { display: inline-flex; align-items: center; gap: 6px; height: 27px; padding: 0 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .pp-star { color: #B8464F; }
 .pp-unmet { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-muted); flex-wrap: wrap; }

@@ -521,3 +521,5 @@ input[type='file'] { font-size: 12px; padding: 8px; }
 :root.a11y-large body { font-size: 112%; }
 :root.a11y-large .small, :root.a11y-large .muted.small { font-size: 14px; }
 :root.a11y-pictures .evidence-pic img { filter: contrast(1.35) saturate(1.4); min-width: min(100%, 360px); }
+.players li.player-left { opacity: 0.7; }
+.seat .seat-leave { margin-top: 4px; }

@@ -191,7 +191,7 @@ const ROOM_ACTIONS = {
     host: true,
     run(m, entry, pid, body) {
       const target = own(entry.room.players, body.playerId);
-      if (!target || target.id === pid) throw new AppError(404, 'player_not_found', '그 참가자를 찾을 수 없어요.');
+      if (!target || target.id === pid || target.left) throw new AppError(404, 'player_not_found', '그 참가자를 찾을 수 없어요.');
       if (!m.isConnected(entry, target.id)) throw new AppError(409, 'not_connected', '연결된 참가자에게만 방장을 넘길 수 있어요.');
       entry.room.hostId = target.id;
       m.roomNotice(entry, `${target.nickname}님이 방장이 됐어요.`);
@@ -276,6 +276,8 @@ const ROOM_ACTIONS = {
       saves.applySnapshot(room, save.snapshot);
       m.applyStage(room, { stage: save.stage, day: save.day });
       world.restore(room, entry.caseDef);
+      // a save from before someone left: they stay gone, and what only they held stays on the board
+      m.settleLeft(entry);
       m.roomNotice(entry, `방장이 ‘${save.name}’ 저장을 불러왔어요 (${progression.stageLabel(save.stage, save.day)}).`);
       return { result: { stage: room.stage, day: room.day }, out: fullOut() };
     },
@@ -308,6 +310,14 @@ const ROOM_ACTIONS = {
       return { result: { removed: target.id }, out: fullOut() };
     },
   },
+
+  // Leaving for good (퇴장), unlike stepping out: the seat and its token are gone afterwards.
+  leave: {
+    stages: progression.STAGES,
+    run(m, entry, pid) {
+      return m.leavePlayer(entry, pid);
+    },
+  },
 };
 
 // Which avatar motion an accepted action plays: picking up wins over looking when a clue was found.
@@ -328,7 +338,7 @@ class RoomManager {
     this.rooms = new Map(); // roomId -> entry
     this.byCode = new Map(); // code -> entry
     this.byToken = new Map(); // sha256(token) -> { roomId, playerId }
-    this.deletedCodes = new Set(); // codes of rooms deleted since start, so their players hear why
+    this.deletedCodes = new Map(); // code -> why, for rooms deleted since start, so their players hear it
     this.flushTimer = setInterval(() => this.flushDirty(), flushMs);
     this.flushTimer.unref();
     this.heartbeat = setInterval(() => this.ping(), HEARTBEAT_MS);
@@ -476,12 +486,14 @@ class RoomManager {
     saves.applySnapshot(room, snap);
     const gone = new Set(dropped.map((x) => x.id));
     for (const [clueId, owners] of Object.entries(room.world.clueOwners)) {
-      const kept = owners.filter((id) => !gone.has(id));
+      // owners who left before the file was made have no seat in it at all
+      const kept = owners.filter((id) => !gone.has(id) && room.players[id]);
       if (kept.length) room.world.clueOwners[clueId] = kept;
       else delete room.world.clueOwners[clueId];
     }
     delete room.restore;
     room.saves = [];
+    if (room.final?.votes) for (const id of Object.keys(room.final.votes)) if (!room.order.includes(id)) delete room.final.votes[id];
     this.applyStage(room, { stage: snap.stage, day: snap.day });
     world.restore(room, entry.caseDef);
     const label = progression.stageLabel(snap.stage, snap.day);
@@ -673,7 +685,7 @@ class RoomManager {
 
   requireRoom(code) {
     const entry = typeof code === 'string' ? this.byCode.get(code.toUpperCase()) : undefined;
-    if (!entry && this.deletedCodes.has(String(code).toUpperCase())) throw new AppError(410, 'room_deleted', '방장이 이 방을 삭제했어요.');
+    if (!entry && this.deletedCodes.has(String(code).toUpperCase())) throw new AppError(410, 'room_deleted', this.deletedCodes.get(String(code).toUpperCase()));
     if (!entry) throw new AppError(404, 'room_not_found', '방을 찾을 수 없어요. 초대 코드를 확인해 주세요.');
     return entry;
   }
@@ -681,13 +693,18 @@ class RoomManager {
   // The host removes the room for good: saved state, seats and save slots. Everyone still
   // connected is cut off and told why; a downloaded save file can still open the game again.
   deleteRoom(entry, pid) {
+    if (pid !== entry.room.hostId) throw new AppError(403, 'host_only', '방장만 방을 삭제할 수 있어요.');
+    return this.removeRoom(entry, '방장이 이 방을 삭제했어요.');
+  }
+
+  // Takes a room off the server for good (deleteRoom, or the last player leaving).
+  removeRoom(entry, message, logText = '방 삭제') {
     const { room } = entry;
-    if (pid !== room.hostId) throw new AppError(403, 'host_only', '방장만 방을 삭제할 수 있어요.');
     clearTimeout(entry.hostTimer);
     for (const id of room.order) this.byToken.delete(room.players[id].tokenHash);
     this.rooms.delete(room.id);
     this.byCode.delete(room.code);
-    this.deletedCodes.add(room.code);
+    this.deletedCodes.set(room.code, message);
     this.db.deleteRoom(room.id);
     for (const w of entry.waiters) {
       clearTimeout(w.timer);
@@ -696,13 +713,100 @@ class RoomManager {
     entry.waiters.clear();
     for (const set of entry.streams.values()) {
       for (const res of set) {
-        this.send(res, 'deleted', { message: '방장이 이 방을 삭제했어요.' });
+        this.send(res, 'deleted', { message });
         res.end();
       }
     }
     entry.streams.clear();
-    this.log(`[room ${room.code}] 방 삭제`);
+    this.log(`[room ${room.code}] ${logText}`);
     return { deleted: room.code };
+  }
+
+  // ---------- leaving for good ----------
+
+  // 퇴장. In the lobby the seat simply goes, as with kick. In a game the record stays (clue owners,
+  // notes, saves and votes may point at it) but leaves room.order, which is what every ready check,
+  // count, condition and gimmick reads; clues only they held go onto the board first.
+  leavePlayer(entry, pid) {
+    const { room } = entry;
+    const p = room.players[pid];
+    const wasHost = room.hostId === pid;
+    const remaining = room.order.filter((id) => id !== pid);
+    this.byToken.delete(p.tokenHash);
+    room.order = remaining;
+    delete room.ready[pid];
+    let moved = 0;
+    let out = fullOut();
+    if (room.stage === 'lobby') {
+      delete room.players[pid];
+      if (remaining.length) this.roomNotice(entry, `${p.nickname}님이 방을 나갔어요.`);
+    } else {
+      const g = entry.caseDef && room.world && room.board && !entry.broken ? this.game(entry) : null;
+      if (g) {
+        for (const clueId of Object.keys(p.notebook?.clues ?? {})) {
+          if (room.board.clues[clueId] || remaining.some((id) => room.players[id].notebook?.clues[clueId])) continue;
+          if (g.shareClue(clueId, pid)) moved += 1;
+        }
+      }
+      if (room.final?.votes) delete room.final.votes[pid];
+      Object.assign(p, { left: true, leftAt: nowIso(), dialogue: null, puzzle: null, hiddenIn: null, seatedAt: null });
+      delete p.tokenHash;
+      if (remaining.length) {
+        const text = `${p.nickname}님이 퇴장했어요.${moved ? ` 가지고 있던 단서 ${moved}장은 공동 보드에 남겼어요.` : ''}`;
+        if (g) g.notify(text);
+        else this.roomNotice(entry, text);
+      }
+      if (g && remaining.length) {
+        // fewer people now count for plates, dances and the like
+        g.runAutomation();
+        out = { ...g.out, important: true, worldChanged: true };
+      }
+    }
+    this.log(`[room ${room.code}] 퇴장 (${remaining.length}명 남음)`);
+    if (!remaining.length) {
+      this.removeRoom(entry, '모두 퇴장해서 방이 삭제됐어요.', '마지막 참가자 퇴장으로 방 삭제');
+      return { result: { left: true, deleted: true, moved }, out: { ...fullOut(), roomDeleted: true } };
+    }
+    if (wasHost) {
+      const next = remaining.find((id) => this.isConnected(entry, id)) ?? remaining[0];
+      room.hostId = next;
+      clearTimeout(entry.hostTimer);
+      entry.hostTimer = null;
+      this.roomNotice(entry, `${room.players[next].nickname}님이 방장이 됐어요.`);
+      this.checkHost(entry);
+    }
+    return { result: { left: true, deleted: false, moved }, out: { ...out, leftId: pid } };
+  }
+
+  // After a save slot is loaded: whoever has left since is still gone (applySnapshot only touches
+  // room.order), their votes do not come back, and clues only they held go back onto the board.
+  settleLeft(entry) {
+    const { room } = entry;
+    const here = new Set(room.order);
+    const left = (id) => !here.has(id) && room.players[id]?.left;
+    if (room.final?.votes) for (const id of Object.keys(room.final.votes)) if (!here.has(id)) delete room.final.votes[id];
+    const g = this.game(entry);
+    for (const [clueId, owners] of Object.entries(room.world.clueOwners ?? {})) {
+      if (room.board.clues[clueId] || !owners.length || !owners.every(left)) continue;
+      if (room.order.some((id) => room.players[id].notebook.clues[clueId])) continue;
+      g.shareClue(clueId, owners[0]);
+    }
+  }
+
+  // The leaver's own streams and long-polls end; coming back with the old token gets bad_token.
+  dropPlayer(entry, pid) {
+    const set = entry.streams.get(pid);
+    entry.streams.delete(pid);
+    for (const res of set ?? []) {
+      this.send(res, 'left', { message: '방에서 퇴장했어요.' });
+      res.end();
+    }
+    for (const w of [...entry.waiters]) {
+      if (w.pid !== pid) continue;
+      clearTimeout(w.timer);
+      entry.waiters.delete(w);
+      w.timeout();
+    }
   }
 
   // The token alone identifies a player; it must also belong to the room in the URL.
@@ -710,7 +814,8 @@ class RoomManager {
     const entry = this.requireRoom(code);
     if (typeof token !== 'string' || !token) throw new AppError(401, 'no_token', '참가 정보가 없어요. 먼저 방에 참가해 주세요.');
     const hit = this.byToken.get(sha256(token));
-    if (!hit || !this.rooms.get(hit.roomId)?.room.players[hit.playerId]) throw new AppError(401, 'bad_token', '참가 정보가 만료됐거나 올바르지 않아요. 다시 참가해 주세요.');
+    const seat = hit ? this.rooms.get(hit.roomId)?.room.players[hit.playerId] : null;
+    if (!seat || seat.left) throw new AppError(401, 'bad_token', '참가 정보가 만료됐거나 올바르지 않아요. 다시 참가해 주세요.');
     if (hit.roomId !== entry.room.id) throw new AppError(403, 'wrong_room', '이 방의 참가자가 아니에요.');
     return { entry, pid: hit.playerId };
   }
@@ -762,7 +867,7 @@ class RoomManager {
     entry.version += 1;
     for (const w of entry.waiters) {
       clearTimeout(w.timer);
-      if (entry.room.players[w.pid]) w.wake();
+      if (entry.room.players[w.pid] && !entry.room.players[w.pid].left) w.wake();
       else w.timeout();
     }
     entry.waiters.clear();
@@ -774,7 +879,8 @@ class RoomManager {
     const requestId = typeof body.requestId === 'string' && body.requestId.length <= 64 ? body.requestId : null;
     const recent = entry.recent.get(pid) ?? new Map();
     if (requestId && recent.has(requestId)) return recent.get(requestId);
-    if (entry.broken) throw new AppError(409, entry.broken.code, entry.broken.message);
+    // a room whose case version is missing can still be left
+    if (entry.broken && body.type !== 'leave') throw new AppError(409, entry.broken.code, entry.broken.message);
 
     // Everything from here to the save runs synchronously, so two requests can never interleave
     // between a check and its write. On any error the room snapshot is put back untouched.
@@ -795,6 +901,8 @@ class RoomManager {
       throw err;
     }
     const { result, out } = outcome;
+    // the last one out took the room with them: nothing left to save or send
+    if (out.roomDeleted) return { ok: true, ...result, stateVersion: entry.version, gained: [], taken: [] };
     const positionsOnly = out.positions && !out.important && !out.worldChanged;
     if (out.important) this.save(entry);
     else if (out.positions || out.dirty) entry.dirty = true;
@@ -811,12 +919,13 @@ class RoomManager {
     };
     // Behind a tunnel, a parked long-poll is answered late; the client then asks for the new view
     // in the action's own reply, which comes back in one round trip.
-    if (body.withView === true) response.view = this.viewFor(entry, pid);
+    if (body.withView === true && !out.leftId) response.view = this.viewFor(entry, pid);
     if (requestId) {
       recent.set(requestId, response);
       if (recent.size > RECENT_REQUESTS) recent.delete(recent.keys().next().value);
       entry.recent.set(pid, recent);
     }
+    if (out.leftId) this.dropPlayer(entry, out.leftId);
     const anim = actionAnimation(body.type, result, response);
     if (anim) this.sendAnimation(entry, pid, anim);
     if (body.type !== 'move' && body.type !== 'chat') this.log(`[room ${entry.room.code}] ${entry.room.players[pid]?.nickname ?? pid}: ${body.type}${out.notices.length ? ` → 알림 ${out.notices.length}건` : ''}`);
@@ -915,7 +1024,7 @@ class RoomManager {
   broadcast(entry) {
     this.changed(entry);
     for (const [pid, set] of entry.streams) {
-      if (!entry.room.players[pid]) continue;
+      if (!entry.room.players[pid] || entry.room.players[pid].left) continue;
       const view = this.viewFor(entry, pid);
       for (const res of set) this.send(res, 'state', view);
     }
@@ -4860,12 +4969,16 @@ const { stageLabel } = require('./progression');
 //   people[characterId] = { met, talks, starred, logs: [{ lineId, kind, text, when, at }], traits: [] }
 //   links = [{ a, b, label, kind: 'confirmed' }]   from talking (a may be 'me') or a line's `link`
 //   guesses = [{ id, a, b, label }]                 lines the player draws between characters
+//   people[characterId].pos = { x, y }               where the player dragged that person on the map
 
 const MAX_LOGS = 80;
 const MAX_TRAITS = 12;
 const TRAIT_MAX = 20;
 const MAX_GUESSES = 30;
 const LABEL_MAX = 12;
+// The relationship map is 744×570 (public/field.css .pp-board). A position is a node's centre
+// across and its portrait's centre down; the bounds keep the whole node (portrait and name) inside.
+const PLACE = { minX: 45, maxX: 699, minY: 45, maxY: 489 };
 
 function personOf(p, id) {
   p.people ??= {};
@@ -4975,6 +5088,27 @@ const PEOPLE_ACTIONS = {
     },
   },
 
+  // Moves one person on the relationship map, or ({ reset: true }) puts everyone back in their slot.
+  personPlace: {
+    stages: NOTE_STAGES,
+    run(g, pid, body) {
+      const p = g.room.players[pid];
+      if (body.reset === true) {
+        for (const person of Object.values(p.people ?? {})) delete person.pos;
+        g.out.important = true;
+        return { reset: true };
+      }
+      const person = requireMet(g, p, body.characterId);
+      const ok = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+      if (!ok(body.x, PLACE.minX, PLACE.maxX) || !ok(body.y, PLACE.minY, PLACE.maxY)) {
+        throw new AppError(400, 'bad_position', `위치는 가로 ${PLACE.minX}~${PLACE.maxX}, 세로 ${PLACE.minY}~${PLACE.maxY} 사이의 정수로 보내 주세요.`);
+      }
+      person.pos = { x: body.x, y: body.y };
+      g.out.important = true;
+      return { characterId: body.characterId, pos: person.pos };
+    },
+  },
+
   guessRemove: {
     stages: NOTE_STAGES,
     run(g, pid, body) {
@@ -4988,7 +5122,7 @@ const PEOPLE_ACTIONS = {
   },
 };
 
-module.exports = { PEOPLE_ACTIONS, talkStarted, lineHeard, clueShown, personOf };
+module.exports = { PEOPLE_ACTIONS, PLACE, talkStarted, lineHeard, clueShown, personOf };
 
 }],
 "src/engine/puzzles.js": [{"../util":"src/util.js","../puzzles":"src/puzzles/index.js","./progression":"src/engine/progression.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
@@ -6096,7 +6230,7 @@ function peopleView(g, me) {
   const all = [...g.ix.characters.values()];
   const cast = all.map((c, slot) => [c, slot]).filter(([c]) => mine[c.id]?.met).map(([c, slot]) => {
     const p = mine[c.id];
-    return { id: c.id, slot, name: c.name, role: c.role, portrait: portraitView(g.caseDef, c.id), talks: p.talks, starred: p.starred, logs: p.logs.map(({ lineId, kind, text, when }) => ({ lineId, kind, text, when })), traits: p.traits };
+    return { id: c.id, slot, name: c.name, role: c.role, portrait: portraitView(g.caseDef, c.id), talks: p.talks, starred: p.starred, logs: p.logs.map(({ lineId, kind, text, when }) => ({ lineId, kind, text, when })), traits: p.traits, pos: p.pos ? { x: p.pos.x, y: p.pos.y } : null };
   });
   const met = new Set(cast.map((c) => c.id));
   return {
@@ -6261,6 +6395,8 @@ function buildView(entry, pid, isConnected, gameClock = () => Date.now()) {
         locationName: started ? caseDef.index.locations.get(p.location)?.name ?? null : null,
       };
     }),
+    // who left for good (퇴장): names only, so their shared cards and notes still read right
+    leftPlayers: Object.values(room.players).filter((p) => p.left).sort((x, y) => String(x.leftAt).localeCompare(String(y.leftAt))).map((p) => ({ id: p.id, nickname: p.nickname, color: p.color, avatar: p.avatar ?? null })),
     me: {
       id: pid,
       nickname: me.nickname,

@@ -225,6 +225,13 @@ export class Connection {
           this.onPos(parsed);
         }
         else if (event === 'anim') this.onAnim?.(parsed);
+        else if (event === 'left') {
+          // this seat left the room for good (from another tab): the token no longer works
+          this.stop();
+          this.onStatus('rejected');
+          this.onRejected(401, parsed.message);
+          return;
+        }
         else if (event === 'deleted') {
           this.stop();
           this.onStatus('rejected');
