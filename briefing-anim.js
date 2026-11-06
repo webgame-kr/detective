@@ -923,7 +923,204 @@ const filmScene = {
   },
 };
 
-const SCENES = { train: trainScene, festival: festivalScene, snow: snowScene, stars: starsScene, radio: radioScene, film: filmScene };
+// ---------- 가면무도회의 열두 번째 손님 (masquerade) ----------
+// a moonlit manor whose windows light one by one, the ballroom where eleven masked guests waltz in a
+// circle behind the pillars (a silver glint behind the left one, twice), and the study next morning:
+// the safe opens and last March's date is stamped on the will. From the briefing design mock-up.
+const MQ2 = {
+  sky: ['#0b0d1e', '#10142a', '#161c38', '#1e2646', '#283154'], star: '#c9d2ec', moon: '#f4ecd2', moonD: '#d8cfb4', halo: '#3a4670',
+  sea: ['#1a2848', '#22345a', '#2c426c'], seaLit: '#8aa6d0', seaHi: '#d8e2f2',
+  hillFar: '#141826', hill: '#0e1018', tree: '#0a0c12',
+  wall: '#4a2e3a', wallL: '#5e3c4a', wallD: '#36202c', roof: '#22161e', roofL: '#33222c', lit: '#f2d080', litL: '#fff0c0', litGlow: '#a07a48', curtain: '#8a2a34',
+  floorA: '#7a4e32', floorB: '#86573a', floorS: '#5e3a24', gold: '#c9a24a', goldL: '#f2d080', goldD: '#8a6a2a',
+  pillar: '#ece6da', pillarM: '#d4ccbe', pillarD: '#b0a796', redwall: '#4a2633', redwallD: '#3a1c28',
+  skin: '#e6b48e', skinD: '#c58f72', ink: '#1a1620',
+  study: '#2e1e18', studyL: '#3e2a20', shelf: '#4a3022', safe: '#3a3a46', safeL: '#525262', safeD: '#262630', paper: '#f6edd8', paperD: '#d8cbb0',
+  red: '#c84a40', redD: '#8a2a24', beam: '#f6e6c0',
+};
+const GUEST2 = [ // dress, dress shade, mask, hair, skirt?
+  ['#c9ccd4', '#a9adb8', '#e8ecf4', '#6a4a36', 1], ['#26304e', '#1a2238', '#2a2630', '#a8a4a0', 0], ['#2c3a6a', '#202c54', '#f2efe8', '#2a2230', 1], ['#6e2a3a', '#521e2a', '#e2b04a', '#3a2e28', 0],
+  ['#2a6a5a', '#1e5044', '#2f8a8a', '#22202a', 0], ['#c8483c', '#a03a30', '#c8483c', '#2a2228', 1], ['#3e64b0', '#2f4e90', '#5b8fd8', '#5a3a28', 1], ['#efe9df', '#cfc8bc', '#f6f4ee', '#d8b070', 1],
+  ['#4e3a6a', '#3a2a52', '#7a5a9a', '#2a2630', 0], ['#6a4a28', '#4e361c', '#d4a440', '#3a2e28', 0], ['#2a2a3a', '#1e1e2c', '#e8ecef', '#a8a4a0', 1],
+];
+const mqEase = (k) => k * k * (3 - 2 * k);
+function dither(ctx, x, y, w, h, c, phase = 0) { for (let yy = y; yy < y + h; yy++) for (let xx = x + ((yy + phase) & 1); xx < x + w; xx += 2) px(ctx, xx, yy, 1, 1, c); }
+function fadeEdges(ctx, t, len) {
+  const a = Math.max(0, 1 - t / 0.35, 1 - (len - t) / 0.35);
+  if (a > 0) { ctx.globalAlpha = Math.min(1, a); px(ctx, 0, 0, W, H, '#08070c'); ctx.globalAlpha = 1; }
+}
+
+function mq2Night(ctx, t) {
+  const pan = mqEase(clamp(t / 3.2, 0, 1)) * 10;          // slow pan to the right
+  MQ2.sky.forEach((c, i) => px(ctx, 0, i * 9, W, 10, c));
+  for (let i = 1; i < 5; i++) dither(ctx, 0, i * 9 - 1, W, 1, MQ2.sky[i]);
+  for (let i = 0; i < 26; i++) {
+    const sx = (hash(i + 500) * 200 - pan * 0.2) % W, sy = hash(i + 560) * 40;
+    const tw = Math.sin(t * 3 + i * 1.7) > 0.2; if (tw) px(ctx, Math.floor(sx), Math.floor(sy), 1, 1, MQ2.star);
+    if (i % 7 === 0 && Math.sin(t * 2 + i) > 0.85) { px(ctx, Math.floor(sx) - 1, Math.floor(sy), 3, 1, MQ2.star); px(ctx, Math.floor(sx), Math.floor(sy) - 1, 1, 3, MQ2.star); }
+  }
+  // moon with a dithered halo
+  const mx = 128 - pan * 0.3, my = 12;
+  for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) { const d = x * x + y * y; if (d < 100 && d > 30 && ((x + y) & 1)) px(ctx, mx + x, my + y, 1, 1, MQ2.halo); }
+  for (let y = -5; y <= 5; y++) for (let x = -5; x <= 5; x++) if (x * x + y * y <= 26) px(ctx, mx + x, my + y, 1, 1, MQ2.moon);
+  px(ctx, mx + 1, my - 2, 2, 2, MQ2.moonD); px(ctx, mx - 3, my + 1, 1, 1, MQ2.moonD); px(ctx, mx + 2, my + 3, 1, 1, MQ2.moonD);
+  // sea with a broken moon path
+  px(ctx, 0, 46, W, 44, MQ2.sea[0]); px(ctx, 0, 46, W, 2, MQ2.sea[2]); dither(ctx, 0, 48, W, 6, MQ2.sea[1]);
+  for (let y = 48; y < 90; y += 3) {
+    const spread = 2 + (y - 48) * 0.3, wob = Math.sin(t * 2.4 + y * 0.6) * 2;
+    for (let k = 0; k < 2; k++) {
+      const x0 = mx - spread + hash(y * 3 + k + Math.floor(t * 6)) * spread * 2 + wob, w = 1 + Math.floor(hash(y + k * 9) * 4);
+      px(ctx, Math.floor(x0), y, w, 1, (y + k) % 4 ? MQ2.seaLit : MQ2.seaHi);
+    }
+  }
+  // far hill, near hill with trees (parallax)
+  for (let x = 0; x < W; x++) { const h = 40 + Math.round(Math.sin((x + pan * 0.5) / 14) * 2); px(ctx, x, h, 1, 12, MQ2.hillFar); }
+  for (let x = 0; x < 118; x++) { const h = 44 + Math.round(Math.sin((x + pan) / 20) * 3 + (x > 100 ? (x - 100) * 0.9 : 0)); px(ctx, x, h, 1, 90 - h, MQ2.hill); }
+  for (let i = 0; i < 6; i++) { const tx = 4 + i * 18 - pan * 0.9; if (tx < -6 || tx > 120) continue; px(ctx, tx + 2, 34, 2, 12, MQ2.tree); px(ctx, tx, 30, 6, 6, MQ2.tree); px(ctx, tx + 1, 27, 4, 3, MQ2.tree); }
+  // the manor
+  const bx = Math.round(24 - pan), by = 20;
+  px(ctx, bx - 3, by - 5, 82, 5, MQ2.roof); px(ctx, bx - 1, by - 7, 78, 2, MQ2.roofL);
+  px(ctx, bx + 32, by - 14, 14, 9, MQ2.roof); px(ctx, bx + 34, by - 16, 10, 2, MQ2.roofL);
+  px(ctx, bx + 6, by - 12, 3, 7, MQ2.roof); px(ctx, bx + 66, by - 11, 3, 6, MQ2.roof);           // chimneys
+  if (t > 1.0) for (let k = 0; k < 4; k++) { const sy = by - 14 - ((t * 6 + k * 3) % 12); px(ctx, bx + 7 + Math.round(Math.sin(t + k) * 1.5), Math.floor(sy), 2, 1, '#3a3e58'); }
+  px(ctx, bx, by, 76, 26, MQ2.wall); px(ctx, bx, by, 76, 1, MQ2.wallL); px(ctx, bx + 72, by, 4, 26, MQ2.wallD);
+  for (let x = bx; x < bx + 72; x += 4) px(ctx, x, by + 13, 2, 1, MQ2.wallD);
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 8; c++) {
+    const x = bx + 4 + c * 9, y = by + 3 + r * 11, on = t > 0.5 + (c * 0.11 + r * 0.25);
+    if (on) { for (let k = -2; k < 8; k += 2) px(ctx, x + k, y - 2, 1, 1, MQ2.litGlow); px(ctx, x - 1, y + 7, 7, 1, MQ2.litGlow); }
+    px(ctx, x, y, 5, 7, on ? MQ2.lit : '#241826'); if (on) px(ctx, x, y, 5, 1, MQ2.litL);
+    px(ctx, x + 2, y, 1, 7, MQ2.wall); px(ctx, x, y + 3, 5, 1, MQ2.wall);
+    // dancers' shadows sliding past the ballroom windows (ground floor)
+    if (on && r === 1) { const sh = ((t * 14 + c * 7) % 14) - 4; if (sh > -2 && sh < 5) px(ctx, x + Math.floor(sh), y + 2, 2, 5, '#5a3a28'); }
+  }
+  px(ctx, bx + 34, by + 18, 8, 8, '#2a1a22'); px(ctx, bx + 35, by + 19, 6, 7, MQ2.litGlow);              // the front door
+  for (const gx of [bx + 28, bx + 48]) { px(ctx, gx, by + 14, 1, 12, '#2a2a32'); px(ctx, gx - 1, by + 12, 3, 2, MQ2.lit); }
+  // music notes drifting out
+  if (t > 1.3) for (let i = 0; i < 4; i++) {
+    const k = (t * 0.55 + i * 0.27) % 1, x = bx + 40 + i * 9 + Math.round(Math.sin((t + i) * 2.6) * 3), y = by - 2 - Math.round(k * 18);
+    ctx.globalAlpha = 1 - k; px(ctx, x, y, 2, 2, MQ2.goldL); px(ctx, x + 1, y - 3, 1, 3, MQ2.goldL); if (i % 2) px(ctx, x + 2, y - 3, 2, 1, MQ2.goldL); ctx.globalAlpha = 1;
+  }
+}
+
+function mq2Dancer(ctx, x, y, g, phase, scale) {
+  const [dress, dressD, mask, hair, skirt] = GUEST2[g];
+  const s = scale > 0.9 ? 1 : 0;                     // the back of the circle is drawn one size smaller
+  const bob = phase % 2;
+  x = Math.round(x); y = Math.round(y) - bob;
+  ctx.globalAlpha = 0.35; px(ctx, x - 4, y + 9 + bob, 9, 2, '#2a1a10'); ctx.globalAlpha = 1;     // shadow
+  if (skirt) { px(ctx, x - 3 - s, y + 2, 7 + 2 * s, 5, dress); px(ctx, x - 4 - s + (phase % 3 === 0 ? 1 : 0), y + 6, 9 + 2 * s, 2 + s, dress); px(ctx, x + 2 + s, y + 3, 1, 4, dressD); }
+  else { px(ctx, x - 2, y + 2, 5, 5, dress); px(ctx, x - 2, y + 7, 2, 3 + bob, '#1a1620'); px(ctx, x + 1, y + 7, 2, 3 - bob + 1, '#1a1620'); }
+  px(ctx, x - 2, y - 2, 5, 5, dress); px(ctx, x + 2, y - 2, 1, 5, dressD);
+  // arms in a waltz hold: one up, one forward
+  px(ctx, x - 4, y - 3 + (phase % 2), 2, 3, dress); px(ctx, x - 4, y - 4 + (phase % 2), 1, 1, MQ2.skin);
+  px(ctx, x + 3, y - 1, 2, 2, dress); px(ctx, x + 5, y - 1, 1, 1, MQ2.skin);
+  // head, hair, mask with eye holes
+  px(ctx, x - 2, y - 7, 5, 5, MQ2.skin); px(ctx, x + 2, y - 7, 1, 5, MQ2.skinD);
+  px(ctx, x - 2, y - 8, 5, 2, hair); px(ctx, x - 3, y - 7, 1, 3, hair);
+  px(ctx, x - 3, y - 5, 7, 2, mask); px(ctx, x - 1, y - 5, 1, 1, MQ2.ink); px(ctx, x + 1, y - 5, 1, 1, MQ2.ink);
+}
+
+function mq2Ballroom(ctx, t) {
+
+  // back wall with balcony and curtains
+  px(ctx, 0, 0, W, 24, MQ2.redwall); px(ctx, 0, 0, W, 2, MQ2.redwallD);
+  for (let x = 6; x < W; x += 26) { px(ctx, x, 4, 12, 12, MQ2.redwallD); px(ctx, x + 1, 5, 10, 10, MQ2.lit); px(ctx, x + 6, 5, 1, 10, MQ2.redwallD); px(ctx, x + 1, 5, 10, 1, MQ2.litL); }
+  px(ctx, 0, 18, W, 2, MQ2.gold); px(ctx, 0, 20, W, 1, MQ2.goldD); for (let x = 1; x < W; x += 4) px(ctx, x, 21, 2, 3, MQ2.gold); px(ctx, 0, 24, W, 1, MQ2.goldD);
+  for (let x = 0; x < 20; x += 3) px(ctx, x, 0, 2, 26, x % 6 ? MQ2.curtain : '#6e1e28');
+  // a figure on the balcony with a notebook
+  px(ctx, 134, 10, 4, 4, MQ2.skin); px(ctx, 134, 9, 4, 2, '#22202a'); px(ctx, 133, 14, 6, 5, '#2f6a6a'); px(ctx, 139, 15, 2, 2, MQ2.paper);
+  // parquet floor in perspective rows
+  for (let y = 25; y < H; y++) {
+    const rowH = 2 + Math.floor((y - 25) / 12), shift = Math.floor((y - 25) / rowH) % 2 ? 4 : 0;
+    for (let x = 0; x < W; x++) px(ctx, x, y, 1, 1, (((x + shift) >> 3) % 2) ? MQ2.floorA : MQ2.floorB);
+    if ((y - 25) % rowH === 0) px(ctx, 0, y, W, 1, MQ2.floorS);
+  }
+  // chandelier: rises into light, crystals twinkle
+  const on = clamp(t / 0.7, 0, 1);
+  px(ctx, 79, 0, 2, 5, '#2a2230'); px(ctx, 70, 5, 20, 2, MQ2.gold); px(ctx, 73, 7, 14, 2, MQ2.goldD);
+  for (let k = 0; k < 7; k++) { const cx = 71 + k * 3; px(ctx, cx, 3, 1, 2, on > 0.3 ? MQ2.litL : '#5a4a30'); if (on > 0.5 && Math.sin(t * 7 + k * 2) > 0.7) px(ctx, cx, 9 + (k % 2), 1, 1, '#ffffff'); else px(ctx, cx, 9 + (k % 2), 1, 1, MQ2.goldL); }
+  if (on > 0.2) for (let y = 26; y < H; y++) for (let x = 20; x < 140; x++) {
+    const d = ((x - 80) / 62) ** 2 + ((y - 58) / 30) ** 2;
+    if (d < 1) { const a = d < 0.45 ? 0.16 : 0.08; if (d >= 0.45 && (x + y) & 1) continue; ctx.globalAlpha = a * on; px(ctx, x, y, 1, 1, MQ2.goldL); ctx.globalAlpha = 1; }
+  }
+  // the circle: eleven guests on an ellipse, back half smaller and behind the pillars
+  const ang0 = t * 0.85, ds = [];
+  for (let i = 0; i < 11; i++) { const a = ang0 + (i / 11) * Math.PI * 2; ds.push({ x: 80 + Math.cos(a) * 46, y: 58 + Math.sin(a) * 13, g: i, back: Math.sin(a) < 0, sc: 0.85 + Math.sin(a) * 0.15 }); }
+  ds.sort((p, q) => p.y - q.y);
+  const phase = Math.floor(t * 5);
+  const pillar = (x) => {
+    px(ctx, x, 26, 9, 46, MQ2.pillarM); px(ctx, x + 1, 26, 3, 46, MQ2.pillar); px(ctx, x + 7, 26, 2, 46, MQ2.pillarD);
+    px(ctx, x - 1, 24, 11, 2, MQ2.gold); px(ctx, x - 1, 72, 11, 2, MQ2.gold); px(ctx, x - 1, 74, 11, 1, MQ2.goldD);
+    ctx.globalAlpha = 0.3; px(ctx, x + 9, 72, 6, 2, '#2a1a10'); ctx.globalAlpha = 1;
+  };
+  for (const d of ds.filter((p) => p.back)) mq2Dancer(ctx, d.x, d.y, d.g, phase + d.g, d.sc);
+  pillar(24); pillar(127);
+  for (const d of ds.filter((p) => !p.back)) mq2Dancer(ctx, d.x, d.y, d.g, phase + d.g, d.sc);
+  // candles flicker on the left and right
+  for (const cx of [14, 146]) { px(ctx, cx, 30, 1, 14, MQ2.gold); px(ctx, cx - 3, 30, 7, 1, MQ2.gold); for (const k of [-3, 0, 3]) { px(ctx, cx + k, 27, 1, 3, MQ2.paper); px(ctx, cx + k, 26 - (Math.sin(t * 9 + k) > 0 ? 1 : 0), 1, 1, '#f2a050'); } }
+  // the small clue: a silver glint behind the left pillar, twice
+  if (on > 0.6 && ((t > 1.2 && t < 1.35) || (t > 2.25 && t < 2.4))) { px(ctx, 21, 46, 2, 1, '#f6f8fc'); px(ctx, 34, 50, 2, 1, '#f6f8fc'); }
+  // floating dust in the light
+  for (let i = 0; i < 10; i++) { const x = 40 + hash(i + 900) * 80, y = 30 + ((t * 6 + hash(i + 950) * 40) % 50); if (Math.sin(t * 4 + i) > 0) px(ctx, Math.floor(x), Math.floor(y), 1, 1, MQ2.litL); }
+}
+
+function mq2Study(ctx, t) {
+  px(ctx, 0, 0, W, H, MQ2.study); px(ctx, 0, 0, W, 34, MQ2.studyL);
+  // bookshelves with uneven books
+  for (let row = 0; row < 3; row++) {
+    px(ctx, 2, 3 + row * 10, 78, 1, MQ2.shelf); px(ctx, 2, 12 + row * 10, 78, 2, MQ2.shelf);
+    for (let x = 4; x < 78; x += 3) { const h = 6 + ((x * 7 + row) % 3); px(ctx, x, 12 + row * 10 - h, 2, h, ['#8a2a34', '#2c3a6a', '#3e7a4e', '#c9a24a', '#6a4a36'][(x + row * 2) % 5]); }
+  }
+  // the window and morning light beams with dust
+  px(ctx, 94, 3, 28, 24, '#2a1c16'); px(ctx, 96, 5, 24, 20, '#cfe2ea'); px(ctx, 96, 5, 24, 4, '#e8f2f6'); px(ctx, 107, 5, 2, 20, '#2a1c16'); px(ctx, 96, 14, 24, 2, '#2a1c16');
+  for (let y = 27; y < H; y++) for (let x = 60; x < W; x++) {
+    const inBeam = (x - 96) > (y - 27) * -0.9 && (x - 122) < (y - 27) * -0.2;
+    if (inBeam) { const k = (x + y) & 1; if (k) { ctx.globalAlpha = 0.12; px(ctx, x, y, 1, 1, MQ2.beam); ctx.globalAlpha = 1; } }
+  }
+  for (let i = 0; i < 12; i++) { const x = 70 + hash(i + 700) * 60, y = 30 + ((t * 4 + hash(i + 760) * 50) % 55); if (Math.sin(t * 3 + i) > -0.2) px(ctx, Math.floor(x), Math.floor(y), 1, 1, MQ2.beam); }
+  // the safe opens in three steps of perspective
+  const open = clamp((t - 0.25) / 0.9, 0, 1), sx = 120, sy = 38;
+  px(ctx, sx, sy, 30, 34, MQ2.safeD); px(ctx, sx + 2, sy + 2, 26, 30, '#141418'); px(ctx, sx + 3, sy + 18, 24, 1, '#262630');
+  const dw = Math.round(26 * (1 - mqEase(open)));
+  if (dw > 0) {
+    px(ctx, sx + 2, sy + 2, dw, 30, MQ2.safe); px(ctx, sx + 2, sy + 2, dw, 1, MQ2.safeL);
+    if (dw > 10) { const kx = sx + 2 + Math.floor(dw / 2) - 3; px(ctx, kx, sy + 13, 6, 6, MQ2.gold); px(ctx, kx + 2, sy + 15, 2, 2, MQ2.goldD); }
+  } else { px(ctx, sx - 6, sy + 2, 6, 30, MQ2.safe); px(ctx, sx - 6, sy + 2, 1, 30, MQ2.safeL); }      // the open door
+  if (open > 0.7) { px(ctx, sx + 8, sy + 9, 14, 8, MQ2.paper); px(ctx, sx + 8, sy + 9, 14, 1, MQ2.paperD); px(ctx, sx + 14, sy + 12, 3, 3, MQ2.red); }   // envelope with a wax seal
+  // the desk and the will sliding into view
+  px(ctx, 8, 62, 100, 10, '#5a3a28'); px(ctx, 8, 62, 100, 2, '#7a5240'); px(ctx, 8, 72, 100, 2, '#3a2418');
+  const slide = mqEase(clamp((t - 1.2) / 0.6, 0, 1));
+  if (slide > 0) {
+    const wx = Math.round(40 - (1 - slide) * 30);
+    px(ctx, wx + 1, 45, 34, 19, MQ2.paperD); px(ctx, wx, 44, 34, 19, MQ2.paper);
+    for (let i = 0; i < 4; i++) px(ctx, wx + 4, 48 + i * 3, 24 - (i % 2) * 7, 1, '#7d8593');
+    // the date stamp lands with a small shake
+    if (t > 2.0) {
+      const hit = clamp((t - 2.0) / 0.15, 0, 1), shake = t < 2.25 ? (Math.floor(t * 40) % 2 ? 1 : -1) : 0;
+      ctx.globalAlpha = hit; px(ctx, wx + 21 + shake, 55, 11, 7, MQ2.red); px(ctx, wx + 22 + shake, 56, 9, 5, MQ2.redD); const gx = wx + 24 + shake; for (const [dx, dy] of [[0,0],[1,0],[2,0],[2,1],[1,2],[2,2],[2,3],[0,4],[1,4],[2,4]]) px(ctx, gx + dx, 56 + dy, 1, 1, MQ2.paper);   // a hand-set "3"
+      px(ctx, gx + 4, 57, 3, 1, MQ2.paper); px(ctx, gx + 4, 59, 3, 1, MQ2.paper); px(ctx, gx + 5, 57, 1, 3, MQ2.paper); ctx.globalAlpha = 1;
+    }
+  }
+  // a gold ribbon from last night on the floor
+  px(ctx, 84, 80, 6, 1, MQ2.gold); px(ctx, 89, 81, 3, 1, MQ2.gold); px(ctx, 83, 81, 2, 1, MQ2.goldD);
+}
+
+const masqueradeScene = {
+  duration: 9.6,
+  captions: [
+    [0, '해안 언덕의 청월관, 올가을 첫 가면무도회.', false],
+    [3.2, '초대 손님은 열한 명이었다.', false],
+    [6.4, '다음 날 아침, 금고 속 유언장의 날짜가 달랐다.', false],
+    [8.2, '그날 밤, 열두 번째 가면 아래에는 누가 있었을까.', false],
+  ],
+  draw(ctx, t) {
+    if (t < 3.2) { mq2Night(ctx, t); return fadeEdges(ctx, t, 3.2); }
+    if (t < 6.4) { mq2Ballroom(ctx, t - 3.2); return fadeEdges(ctx, t - 3.2, 3.2); }
+    mq2Study(ctx, t - 6.4); fadeEdges(ctx, t - 6.4, 3.6);
+  },
+};
+
+const SCENES = { train: trainScene, festival: festivalScene, snow: snowScene, stars: starsScene, radio: radioScene, film: filmScene, masquerade: masqueradeScene };
 
 // ---------- the player ----------
 export function briefingAnim(theme) {
