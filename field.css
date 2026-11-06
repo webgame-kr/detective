@@ -293,6 +293,7 @@ body.field .dialogue-card, body.field .modal-card { font-family: 'Galmuri14', 'G
 .scene[data-stage='ending'] .shift-card::before { background: var(--teal); }
 .scene-title { font-size: 24px; line-height: 30px; font-weight: 700; }
 .scene-line { margin: 6px 0 0; min-height: 90px; display: grid; place-items: center; font-family: 'Galmuri14', 'Galmuri11', monospace; font-size: 17px; line-height: 30px; text-wrap: balance; animation: shift-pop 0.3s steps(3, end) both; }
+.scene-figure { display: block; margin: 0 auto; image-rendering: pixelated; }
 .scene-dots { display: flex; gap: 9px; }
 .scene-dots i { width: 9px; height: 9px; background: var(--paper-lo); box-shadow: 0 0 0 3px var(--ink); }
 .scene-dots i.is-on { background: var(--brass); }

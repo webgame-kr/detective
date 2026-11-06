@@ -96,7 +96,36 @@
   // Every cell a route covers (validation: each must be floor).
   const routeCells = (route) => (route.length === 1 ? [route[0]] : ring(route));
 
-  const api = { showBeats, songAt, roundStart, nextRound, routeFor, dancing, dancerAt, routeProblem, routeCells };
+  // dance:v2 — the way a step goes: e, w, n or s (a slant counts as its side), null for no step
+  const stepDir = (dx, dy) => (dx > 0 ? 'e' : dx < 0 ? 'w' : dy < 0 ? 'n' : dy > 0 ? 's' : null);
+  const inArea = (at, [x, y, w, h]) => at.x >= x && at.x < x + w && at.y >= y && at.y < y + h;
+
+  // dance:v2 — the look a dancer wears where it stands now (a look: { song, area, sprite }), or null
+  const lookAt = (dancer, info, at) => (info && at ? (dancer.looks ?? []).find((l) => l.song === info.number && inArea(at, l.area)) ?? null : null);
+
+  // dance:v2 — which frame of a dancer's sheet shows at `now` in the song `info` (from songAt).
+  // sheet: { walk: [frame…], walkMs, turn?: { e|w|n|s: frame }, end?: [frame…] }
+  //   - the song's last beats play `end`, one frame a beat (a spin, then a bow)
+  //   - a beat whose step goes another way than the step before shows that way's `turn` frame
+  //   - otherwise the walk cycle, a frame every walkMs (in place too: they dance where they wait)
+  // Reduced motion holds the first walk frame.
+  function sheetFrame(sheet, dancer, info, now, beatMs, reduce = false) {
+    const walk = Array.isArray(sheet.walk) && sheet.walk.length ? sheet.walk : [0];
+    if (reduce || !info) return walk[0];
+    const end = sheet.end ?? [];
+    const left = info.beats - Math.floor(Math.max(0, now - info.startAt) / beatMs);
+    if (end.length && left <= end.length) return end[end.length - left];
+    if (sheet.turn) {
+      const at = dancerAt(dancer, info, now, beatMs);
+      const before = now - beatMs >= info.startAt ? dancerAt(dancer, info, now - beatMs, beatMs) : null;
+      const way = at && stepDir(at.x - at.prevX, at.y - at.prevY);
+      const was = before && stepDir(before.x - before.prevX, before.y - before.prevY);
+      if (way && way !== was && sheet.turn[way] !== undefined) return sheet.turn[way];
+    }
+    return walk[Math.floor(Math.max(0, now - info.startAt) / (sheet.walkMs ?? 200)) % walk.length];
+  }
+
+  const api = { showBeats, songAt, roundStart, nextRound, routeFor, dancing, dancerAt, routeProblem, routeCells, stepDir, lookAt, sheetFrame };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Dance = api;
 })(typeof window !== 'undefined' ? window : globalThis);

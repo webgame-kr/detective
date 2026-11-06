@@ -78,6 +78,10 @@ export const GIMMICK_RENDERERS = {
   // A dance (shared/dance.js gives the song and every dancer's cell, as the server judges them):
   // the guests on their routes of this song, sliding a cell each beat, under the furniture fronts.
   // A dark song (a piano solo) dims the floor a little. Dancers never block and are not talked to.
+  // A dancer with a sheet layout (dance:v2) plays it as laid out: the walk cycle, a turn frame when
+  // its step changes way, the spin and bow at the song's end; a two-person sheet is just wider.
+  // The shade (dance:v2) is sent only to the one standing where it applies: while its song plays,
+  // those rectangles go dark for them (translucent black, and a dither on the wide ones).
   dance(ctx, gm, { T, S, now, reduce, fronts }) {
     const Dn = window.Dance;
     if (!Dn || !gm.active || gm.anchorAt == null) return;
@@ -93,10 +97,13 @@ export const GIMMICK_RENDERERS = {
       const x = (at.prevX + (at.x - at.prevX) * f) * T;
       const y = (at.prevY + (at.y - at.prevY) * f) * T;
       const sp = d.sprite;
-      drawBehind(ctx, fronts, S, Math.round(y / T), [x - T, y - 2 * T - 4 * S, 3 * T, 3 * T + 8 * S], (c) => {
+      // a couple sheet is wider than a tile or two: the box it may be cut out of grows with it
+      const half = Math.max(T, ((sp?.frameSize?.[0] ?? 32) * S) / 2);
+      drawBehind(ctx, fronts, S, Math.round(y / T), [x + T / 2 - half - T / 2, y - 2 * T - 4 * S, 2 * half + T, 3 * T + 8 * S], (c) => {
         const img = sp ? loadImage(sp.url) : null;
         let frame = null;
-        if (sp?.strip && img?.naturalWidth) {
+        if (sp?.sheet && img?.naturalWidth) frame = { x: Dn.sheetFrame(sp.sheet, d, info, now, gm.beatMs, reduce) * sp.frameSize[0], y: 0 };
+        else if (sp?.strip && img?.naturalWidth) {
           // a dance sheet: its frames side by side, two to a beat
           const n = Math.max(1, Math.floor(img.naturalWidth / sp.frameSize[0]));
           const k = reduce ? 0 : Math.floor((now - info.startAt) / (gm.beatMs / 2)) % n;
@@ -108,6 +115,7 @@ export const GIMMICK_RENDERERS = {
       });
       if (d.label) label(ctx, d.label, x + T / 2, y + T + 9, { font: '11px system-ui, sans-serif', bg: 'rgba(255,246,222,0.82)' });
     }
+    if (gm.shade && gm.shade.song === info.number) drawShade(ctx, gm.shade.rects, T, S);
   },
 
   // A camera on the wall and what it sees now (pale red cells).
@@ -315,6 +323,19 @@ function ditherPattern(ctx, dot) {
     dithers.set(dot, c);
   }
   return ctx.createPattern(dithers.get(dot), 'repeat');
+}
+
+// A dance's shade (dance:v2): what cannot be seen from where the player stands. Translucent black
+// over each rectangle, and on the wide ones (8 tiles or more) the light-zone checker on top, so a
+// big dark area reads as shadow, not as a grey wash. No fade: it is there while the song plays.
+const SHADE_DITHER_TILES = 8;
+function drawShade(ctx, rects, T, S) {
+  ctx.fillStyle = 'rgba(6, 4, 14, 0.55)';
+  for (const [x, y, w, h] of rects) ctx.fillRect(x * T, y * T, w * T, h * T);
+  const wide = rects.filter(([, , w, h]) => w * h >= SHADE_DITHER_TILES);
+  if (!wide.length) return;
+  ctx.fillStyle = ditherPattern(ctx, S > 1 ? 2 * S : 4);
+  for (const [x, y, w, h] of wide) ctx.fillRect(x * T, y * T, w * T, h * T);
 }
 
 // Footprints (prints layers) come first: one cell of their sheet per print, the column for its

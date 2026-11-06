@@ -1342,6 +1342,10 @@ class Game {
       // a notice only that player is sent
       notifyTo: (pid, text, kind = null) => this.notify(text, null, kind, pid),
       changed: () => this.changed(),
+      // the views are sent again (something drawn from the clock changed) without saving the room
+      refresh: () => {
+        this.out.worldChanged = true;
+      },
       check: (cond) => this.check(cond, null),
       solo: Boolean(this.room.settings?.solo),
       players: this.room.order.length,
@@ -2593,13 +2597,15 @@ module.exports = { TOTAL_DAYS, STAGES, nextStage, stageLabel, isReachable, parti
 // Reviewed gimmick types. Case data can only reference a type listed here; it never ships code.
 // A gimmick module provides:
 //   type, feature            identifier used in case data / requiredFeatures
+//   laterFeatures?           features for fields added later (dance:v2): a package names one only when it uses them
 //   clientRenderer           key of the drawing function in public/map.js
 //   validateConfig(config, path, ctx, errors)
 //   location(config)         where its public view is shown
 //   initialState(config) / restoreState(saved, config)   persisted in room.world.gimmicks[id]
 //   update(api) → bool       server-side reaction to moves / connection changes
 //   handleAction?(api, payload, actorId)   optional explicit action ({ type: 'gimmick' })
-//   publicView(config, state, { check, solo, players })   what players in that location may see
+//   publicView(config, state, { check, solo, players, day, stage, now })   what players in that location may see
+//   playerView?(view, config, state, me)   what only the player me may add to it (where they stand)
 //   supportsSolo             true when the module has a rule for one player (required by meta.solo cases)
 //   watcher                  true for guards and cameras: the room is checked on a beat in the daytime
 //   ticks                    true for others that move with time alone (a dance): checked on the same beat,
@@ -2612,7 +2618,7 @@ const REGISTRY = new Map(MODULES.map((m) => [m.type, m]));
 module.exports = {
   get: (type) => REGISTRY.get(type),
   has: (type) => REGISTRY.has(type),
-  features: () => MODULES.map((m) => m.feature),
+  features: () => MODULES.flatMap((m) => [m.feature, ...(m.laterFeatures ?? [])]),
   featureOf: (type) => REGISTRY.get(type)?.feature,
   all: () => [...MODULES],
 };
@@ -3210,11 +3216,24 @@ const D = require('../shared/dance');
 //     per player (the empty place in a circle dance: you dance it yourself)
 //   - songStart: effects the first time a song begins on a day (a scene the show reaches)
 // Alone, the beat is soloBeatMs (1.5× slower by default), so a slot is easier to reach in time.
+// dance:v2 (fields a package names that feature for):
+//   - dancer.sheet: how its picture is laid out (frame size, a walk cycle, turn frames, a closing
+//     spin and bow), so dance sheets and two-person couple sheets are played as drawn
+//   - dancer.looks: another picture while it is inside an area of the floor in a song (a partner
+//     changed where nobody can see). The page is only ever sent the picture in use now: neither the
+//     area nor the other picture, so the change cannot be read from what the page holds
+//   - slot.shade: rectangles drawn dark for the one standing on the slot while its song plays
+//     (what cannot be seen from there). Only that player is sent them, and only while they stand there
 
 const COUNT = ['', '한', '두', '세', '네', '다섯', '여섯', '일곱', '여덟'];
 const ENTER_TEXT = '춤이 비워 둔 자리예요. 이 곡이 이어지는 동안 여기 서 있어 보세요.';
 const DONE_TEXT = '곡에 맞춰 한 바퀴를 함께 돌았어요.';
 const STRIP = { frameSize: [32, 36], anchor: [16, 33] }; // a dance sheet: frames side by side on the shared 32×36 grid
+const V2 = 'dance:v2';
+const pair = (v, min, max) => Array.isArray(v) && v.length === 2 && v.every((n) => Number.isInteger(n) && n >= min && n <= max);
+const frameList = (v, min, max) => Array.isArray(v) && v.length >= min && v.length <= max && v.every((n) => Number.isInteger(n) && n >= 0 && n <= 15);
+// a rectangle [x, y, w, h] inside the place
+const rectOk = (r, inside) => Array.isArray(r) && r.length === 4 && r.every(Number.isInteger) && r[2] >= 1 && r[3] >= 1 && inside(r[0], r[1]) && inside(r[0] + r[2] - 1, r[1] + r[3] - 1);
 
 const cfg = (config) => ({
   beatMs: 500,
@@ -3247,6 +3266,7 @@ module.exports = {
   supportsSolo: true,
   // not a watcher (it sees nobody), but it moves with time: the room is checked on a beat in the daytime
   ticks: true,
+  laterFeatures: [V2],
 
   authoring: {
     summary: '낮 동안 한 장소에서 손님들이 곡 목록(songs)을 차례로 추고, 마지막 곡이 끝나면 처음부터 다시 춘다. 곡마다 춤추는 사람(dancers)이 자기 경로를 한 박자에 한 칸씩 돈다. 지금 몇 번째 곡인지는 시계로 정해지고(시작은 그날 그 기믹이 처음 켜진 때), 그 장소에 있는 사람에게 "♪ 곡 3 · 「달빛」" 띠와 곡 칸이 보인다. 춤추는 사람은 길을 막지 않고, 보지도 않고, 말을 걸 수도 없다. 조건 { "type": "song", "gimmick": 기믹 ID, "is": 곡 번호 }로 대상·선택지·변형을 그 곡 동안만 열 수 있다(기믹이 꺼져 있거나 밤이면 거짓). slots: 그 곡 동안 그 칸에 holdBeats박자 가만히 서 있으면 effects가 그 사람에게 한 번 실행된다(밟으면 enterText, 마치면 text가 그 사람에게만 뜬다). songStart: 그날 그 곡이 처음 시작될 때 effects를 한 번 실행한다(행동한 사람 없음). 혼자 하면 soloBeatMs(기본 beatMs의 1.5배)로 느려진다.',
@@ -3255,8 +3275,10 @@ module.exports = {
       when: '(선택) 춤이 열리는 조건(행동한 사람 없음, song 조건은 못 씀). 예: 2·4일 차만 { "type": "any", "of": [day eq 2, day eq 4] }',
       beatMs: '(선택) 한 박자 길이(ms), 기본 500', soloBeatMs: '(선택) 혼자 할 때, 기본 beatMs × 1.5',
       songs: '[{ "title": 20자, "style"?: 40자(띠에 함께 보이는 춤 이름·대형), "beats": 4~400, "dark"?: true(어두운 띠) }] 1~8곡. 곡 길이 = beats × beatMs',
-      dancers: '(선택) [{ "id", "character"?: 인물 ID, "sprite"?: assets 파일(32×36 칸이 가로로 이어진 춤 그림), "label"?: 20자(발밑 이름), "route"?: 기본 경로, "routes"?: { "3": 곡 3의 경로 }, "songs"?: [나와서 추는 곡 번호] }] 16명 이하. 경로는 [{ "x", "y", "wait"? }] 1~40칸(가로·세로·45도 직선으로 이어지고 끝에서 처음으로 돌아옴), 곡이 시작될 때 첫 칸에서 출발. sprite가 없으면 인물의 sprite. 가면 쓴 손님은 이름이 드러나지 않게 character 대신 sprite만 준다(페이지로 보내는 것은 그림 주소뿐)',
-      slots: '(선택) [{ "id", "x", "y", "song": 곡 번호, "holdBeats": 1~그 곡 박자 수, "when"?: 조건(행동한 사람 = 서 있는 사람), "enterText"?: 120자, "text"?: 200자, "effects": 실행 결과(행동한 사람 = 서 있는 사람) }] 8개 이하. 사람이 설 수 있는 바닥 칸. 곡이 바뀌거나 한 걸음이라도 움직이면 처음부터',
+      dancers: '(선택) [{ "id", "character"?: 인물 ID, "sprite"?: assets 파일(32×36 칸이 가로로 이어진 춤 그림), "label"?: 20자(발밑 이름), "route"?: 기본 경로, "routes"?: { "3": 곡 3의 경로 }, "songs"?: [나와서 추는 곡 번호], "sheet"?: 그림 칸 배치(dance:v2), "looks"?: 구역 안에서 바뀌는 그림(dance:v2) }] 16명 이하. 경로는 [{ "x", "y", "wait"? }] 1~40칸(가로·세로·45도 직선으로 이어지고 끝에서 처음으로 돌아옴), 곡이 시작될 때 첫 칸에서 출발. sprite가 없으면 인물의 sprite. 가면 쓴 손님은 이름이 드러나지 않게 character 대신 sprite만 준다(페이지로 보내는 것은 그림 주소뿐). sheet가 없으면 sprite의 칸을 한 박자에 두 칸씩 차례로 돌린다',
+      'dancers[].sheet': '(선택, requiredFeatures에 "dance:v2") 춤추는 사람 그림(sprite)의 칸 배치 { "size": [가로, 세로](8~128, 춤 시트 [32, 36] · 두 사람 커플 시트 [64, 36]), "anchor"?: [x, y](발 위치, 기본 [가로/2, 세로-3]), "walk": [칸 번호 1~8개](걷는 동안 차례로, 예 [0, 1, 2, 1]), "walkMs"?: 60~2000(기본 200), "turn"?: { "e"|"w"|"n"|"s": 칸 번호 }(걷는 방향이 바뀐 박자에 그 방향 칸), "end"?: [칸 번호 0~4개](곡의 마지막 박자들에 한 박자씩, 예 회전 6 → 인사 7) }. 칸 번호는 0~15',
+      'dancers[].looks': '(선택, requiredFeatures에 "dance:v2") [{ "song": 곡 번호, "area": [x, y, 가로, 세로], "sprite": assets 파일 }] 4개 이하. 그 곡 동안 구역 안의 칸에 있을 때만 다른 그림(같은 sheet 배치)으로 그린다. 페이지에는 지금 쓰는 그림 하나만 가므로 구역도, 다른 그림도 미리 알 수 없다(그 사람이 구역에 들어서면 서버가 화면을 다시 보냄)',
+      slots: '(선택) [{ "id", "x", "y", "song": 곡 번호, "holdBeats": 1~그 곡 박자 수, "when"?: 조건(행동한 사람 = 서 있는 사람), "enterText"?: 120자, "text"?: 200자, "effects": 실행 결과(행동한 사람 = 서 있는 사람), "shade"?: [[x, y, 가로, 세로] 1~8개](dance:v2) }] 8개 이하. 사람이 설 수 있는 바닥 칸. 곡이 바뀌거나 한 걸음이라도 움직이면 처음부터. shade: 그 칸에 선 사람에게만, 그 곡 동안 그 사각형들을 어둡게 그린다(거기서 안 보이는 곳. 반투명 검정, 넓은 면은 점무늬). 사각형은 그 칸에 서 있는 동안 그 사람에게만 간다',
       songStart: '(선택) [{ "song": 곡 번호, "effects": 실행 결과(행동한 사람 없음) }] 그날 그 곡이 처음 시작될 때 한 번',
       loopText: '(선택) 마지막 곡이 끝나 처음으로 돌아갈 때 그 장소에 있는 사람에게 뜨는 말, 120자. 기본 "무도회가 끝났어요. 여섯 곡이 다시 처음부터 시작돼요."',
     },
@@ -3273,10 +3295,11 @@ module.exports = {
           { title: '달빛', style: '피아노 독주 · 원형 대형', beats: 64, dark: true },
         ],
         dancers: [
-          { id: 'fox', sprite: 'dance_fox.png', label: '은색 여우', route: [{ x: 4, y: 4 }, { x: 8, y: 4 }], routes: { 3: [{ x: 5, y: 3 }, { x: 9, y: 3 }, { x: 9, y: 7 }, { x: 5, y: 7 }] } },
+          { id: 'fox', sprite: 'dance_fox.png', sheet: { size: [32, 36], walk: [0, 1, 2, 1], walkMs: 200, turn: { e: 3, n: 4, w: 5 }, end: [6, 7] }, route: [{ x: 4, y: 4 }, { x: 8, y: 4 }], routes: { 3: [{ x: 5, y: 3 }, { x: 9, y: 3 }, { x: 9, y: 7 }, { x: 5, y: 7 }] } },
+          { id: 'pair', sprite: 'couple_a.png', sheet: { size: [64, 36], walk: [0, 1, 2, 3], walkMs: 250 }, songs: [3], route: [{ x: 9, y: 7 }, { x: 5, y: 7 }, { x: 5, y: 3 }, { x: 9, y: 3 }], looks: [{ song: 3, area: [4, 2, 2, 3], sprite: 'couple_b.png' }] },
           { id: 'kim', character: 'kim', songs: [1, 3], route: [{ x: 4, y: 5 }, { x: 8, y: 5 }] },
         ],
-        slots: [{ id: 'circle_gap', x: 7, y: 3, song: 3, holdBeats: 16, enterText: '원형 대형의 빈자리예요. 여기 서면 손님들과 함께 돌아요.', text: '한 바퀴를 돌았어요 · 기둥 뒤를 지나는 동안 객석이 보이지 않았어요', effects: [{ type: 'giveClue', clue: 'c_circle', to: 'actor' }] }],
+        slots: [{ id: 'alcove', x: 4, y: 2, song: 3, holdBeats: 8, enterText: '기둥 뒤 알코브 안쪽이에요. 원이 이 자리를 지나가요.', text: '여기서는 객석이 보이지 않아요.', shade: [[6, 9, 8, 3]], effects: [{ type: 'giveClue', clue: 'c_circle', to: 'actor' }] }],
         songStart: [{ song: 3, effects: [{ type: 'fireEvent', event: 'ev_moonlight' }] }],
         loopText: '재현 무도회가 끝났어요. 세 곡이 다시 처음부터 시작돼요.',
       },
@@ -3324,10 +3347,41 @@ module.exports = {
       if (problem) errors.push(`${p}: ${problem}`);
       else if (known) for (const c of D.routeCells(route)) if (!ctx.isFloor(location, c.x, c.y)) errors.push(`${p}: (${c.x},${c.y})는 바닥이 아니에요`);
     };
+    const inside = (x, y) => !known || ctx.inBounds(location, x, y);
+    const needV2 = (p, what) => {
+      if (!ctx.features?.has(V2)) errors.push(`${p}: ${what}를 쓰려면 requiredFeatures에 '${V2}'를 적어야 해요`);
+    };
     ids(config.dancers, `${path}.dancers`, '춤추는 사람', 16).forEach((d, i) => {
       const p = `${path}.dancers[${i}]`;
-      if (!checkObject(d, { id: f.any(), character: f.ref('character', true), sprite: f.str(80, true), label: f.str(20, true), route: f.any(true), routes: f.any(true), songs: f.any(true) }, p, ctx, errors)) return;
+      if (!checkObject(d, { id: f.any(), character: f.ref('character', true), sprite: f.str(80, true), label: f.str(20, true), route: f.any(true), routes: f.any(true), songs: f.any(true), sheet: f.any(true), looks: f.any(true) }, p, ctx, errors)) return;
       if (d.sprite !== undefined && ctx.assets && !ctx.assets.has(d.sprite)) errors.push(`${p}.sprite: assets에 없는 파일 '${d.sprite}'`);
+      // dance:v2: the sheet's layout, and other pictures inside an area of the floor
+      if (d.sheet !== undefined) {
+        needV2(`${p}.sheet`, 'sheet');
+        if (d.sprite === undefined) errors.push(`${p}.sheet: 그림 칸 배치라서 sprite가 있어야 해요`);
+        const sp = `${p}.sheet`;
+        if (checkObject(d.sheet, { size: f.any(), anchor: f.any(true), walk: f.any(), walkMs: f.int(60, 2000, true), turn: f.any(true), end: f.any(true) }, sp, ctx, errors)) {
+          const s = d.sheet;
+          if (!pair(s.size, 8, 128)) errors.push(`${sp}.size: [가로, 세로] 8~128 정수여야 해요`);
+          else if (s.anchor !== undefined && !(pair(s.anchor, 0, 128) && s.anchor[0] <= s.size[0] && s.anchor[1] <= s.size[1])) errors.push(`${sp}.anchor: 칸 안의 [x, y] 정수여야 해요`);
+          if (!frameList(s.walk, 1, 8)) errors.push(`${sp}.walk: 칸 번호(0~15) 1~8개의 배열이어야 해요`);
+          if (s.end !== undefined && !frameList(s.end, 0, 4)) errors.push(`${sp}.end: 칸 번호(0~15) 4개 이하의 배열이어야 해요`);
+          if (s.turn !== undefined && !(isPlainObject(s.turn) && Object.entries(s.turn).every(([k, v]) => ['e', 'w', 'n', 's'].includes(k) && Number.isInteger(v) && v >= 0 && v <= 15))) errors.push(`${sp}.turn: { "e"|"w"|"n"|"s": 칸 번호(0~15) } 객체여야 해요`);
+        }
+      }
+      if (d.looks !== undefined) {
+        needV2(`${p}.looks`, 'looks');
+        if (d.sprite === undefined) errors.push(`${p}.looks: 바뀌기 전의 그림(sprite)이 있어야 해요`);
+        if (!Array.isArray(d.looks) || d.looks.length < 1 || d.looks.length > 4) errors.push(`${p}.looks: 1~4개의 배열이어야 해요`);
+        else d.looks.forEach((l, k) => {
+          const lp = `${p}.looks[${k}]`;
+          if (!checkObject(l, { song: f.int(1, 8), area: f.any(), sprite: f.str(80) }, lp, ctx, errors)) return;
+          if (!songNo(l.song)) errors.push(`${lp}.song: 1~${songs.length} 곡 번호여야 해요`);
+          else if (Array.isArray(d.songs) && !d.songs.includes(l.song)) errors.push(`${lp}.song: 이 사람이 추지 않는 곡이에요`);
+          if (!rectOk(l.area, inside)) errors.push(`${lp}.area: 장소 안의 [x, y, 가로, 세로] 정수여야 해요`);
+          if (ctx.assets && !ctx.assets.has(l.sprite)) errors.push(`${lp}.sprite: assets에 없는 파일 '${l.sprite}'`);
+        });
+      }
       if (d.sprite === undefined && d.character === undefined) errors.push(`${p}: sprite나 character 중 하나는 있어야 해요`);
       if (d.songs !== undefined && (!Array.isArray(d.songs) || !d.songs.length || !d.songs.every(songNo))) errors.push(`${p}.songs: 1~${songs.length} 곡 번호의 배열이어야 해요`);
       if (d.route !== undefined) checkRoute(d.route, `${p}.route`);
@@ -3347,7 +3401,11 @@ module.exports = {
     ids(config.slots, `${path}.slots`, '자리', 8).forEach((sl, i) => {
       const p = `${path}.slots[${i}]`;
       // the one standing there is the acting player
-      if (!checkObject(sl, { id: f.any(), x: f.int(0, 200), y: f.int(0, 200), song: f.int(1, 8), holdBeats: f.int(1, 400), when: f.condition(true), enterText: f.str(120, true), text: f.str(200, true), effects: f.effects() }, p, { ...ctx, noActor: false }, errors)) return;
+      if (!checkObject(sl, { id: f.any(), x: f.int(0, 200), y: f.int(0, 200), song: f.int(1, 8), holdBeats: f.int(1, 400), when: f.condition(true), enterText: f.str(120, true), text: f.str(200, true), effects: f.effects(), shade: f.any(true) }, p, { ...ctx, noActor: false }, errors)) return;
+      if (sl.shade !== undefined) {
+        needV2(`${p}.shade`, 'shade');
+        if (!Array.isArray(sl.shade) || sl.shade.length < 1 || sl.shade.length > 8 || !sl.shade.every((r) => rectOk(r, inside))) errors.push(`${p}.shade: 장소 안의 [x, y, 가로, 세로] 사각형 1~8개의 배열이어야 해요`);
+      }
       if (!songNo(sl.song)) errors.push(`${p}.song: 1~${songs.length} 곡 번호여야 해요`);
       else if (Number.isInteger(songs[sl.song - 1]?.beats) && sl.holdBeats > songs[sl.song - 1].beats) errors.push(`${p}.holdBeats: 곡 ${sl.song}의 박자 수(${songs[sl.song - 1].beats})보다 길 수 없어요`);
       if (known && !ctx.isStandable(location, sl.x, sl.y)) errors.push(`${p}: 사람이 설 수 있는 바닥이 아니에요`);
@@ -3366,7 +3424,8 @@ module.exports = {
 
   location: (config) => config.location,
 
-  initialState: () => ({ anchorAt: null, anchorDay: 0, holds: {}, done: {}, started: { day: 0, songs: [] } }),
+  // shown (dance:v2 looks): which look each dancer wore when the views were last sent; not kept over a restart
+  initialState: () => ({ anchorAt: null, anchorDay: 0, holds: {}, done: {}, started: { day: 0, songs: [] }, shown: '' }),
   restoreState: (saved, config) => {
     const slotIds = new Set((config.slots ?? []).map((s) => s.id));
     const done = {};
@@ -3378,6 +3437,7 @@ module.exports = {
       holds: {},
       done,
       started: { day: Number.isInteger(saved?.started?.day) ? saved.started.day : 0, songs: Array.isArray(saved?.started?.songs) ? saved.started.songs.filter(Number.isInteger) : [] },
+      shown: '',
     };
   },
 
@@ -3410,6 +3470,14 @@ module.exports = {
       changed = true;
       for (const st of c.songStart) if (st.song === info.number) api.applyEffects(st.effects);
     }
+    // dance:v2 looks: the page holds only the picture in use, so it is sent again when one changes
+    if (c.dancers.some((d) => d.looks)) {
+      const shown = c.dancers.map((d) => (d.looks ? d.looks.indexOf(D.lookAt(d, info, D.dancerAt(d, info, now, beatMs))) : '')).join(',');
+      if (s.shown !== shown) {
+        s.shown = shown;
+        api.refresh?.();
+      }
+    }
     // slots: whoever stands still on one through its beats
     const here = api.peopleAt(c.location);
     const present = new Set(here.map((p) => p.id));
@@ -3441,24 +3509,38 @@ module.exports = {
   // Everyone in the place sees the dance anyway; the routes are what the client draws it from. Slots
   // are not sent: they are found by standing on them. A dancer's character is never sent, only the
   // picture it is drawn with (resolveView), so a masked guest is not named by the page.
-  publicView: (config, state, { check, solo, day, stage }) => {
+  publicView: (config, state, { check, solo, day, stage, now = Date.now() }) => {
     const c = cfg(config);
     const today = state.anchorDay === day && stage === 'day';
+    const beatMs = beatOf(c, solo);
+    const info = today && state.anchorAt != null ? D.songAt(c.songs, state.anchorAt, now, beatMs) : null;
+    // dance:v2 looks: the picture this dancer wears now, judged by the same clock as its cell
+    const spriteNow = (d) => (d.looks ? D.lookAt(d, info, D.dancerAt(d, info, now, beatMs))?.sprite ?? d.sprite : d.sprite);
     return {
       songs: c.songs.map((s) => ({ title: s.title, style: s.style ?? null, beats: s.beats, dark: s.dark === true })),
       beatMs: beatOf(c, solo),
       anchorAt: today ? state.anchorAt : null,
       active: stage === 'day' && (!c.when || check(c.when)),
       loopText: c.loopText,
-      dancers: c.dancers.map((d) => ({ id: d.id, label: d.label ?? null, route: d.route ?? null, routes: d.routes ?? null, songs: d.songs ?? null, sprite: d.sprite ?? null, character: d.character ?? null })),
+      dancers: c.dancers.map((d) => ({ id: d.id, label: d.label ?? null, route: d.route ?? null, routes: d.routes ?? null, songs: d.songs ?? null, sprite: spriteNow(d) ?? null, sheet: d.sheet ?? null, character: d.character ?? null })),
     };
+  },
+
+  // dance:v2 shade: only to the one standing on a slot that has it, while they stand there (the
+  // page darkens it while the slot's song plays). Nobody else is told where it is.
+  playerView(view, config, state, me) {
+    if (!view.active || me.location !== config.location) return;
+    const sl = (config.slots ?? []).find((s) => s.shade && s.x === me.x && s.y === me.y);
+    if (sl) view.shade = { song: sl.song, rects: sl.shade };
   },
 
   // view.js: pictures for the dancers (a dance sheet from the assets, else the character's own sprite)
   resolveView(view, { asset, sprite }) {
-    view.dancers = view.dancers.map(({ character, sprite: sheet, ...d }) => ({
+    // dance:v2: a sheet laid out as the case says (frame size, walk, turns, the closing frames)
+    const laid = (file, s) => ({ url: asset(file), frameSize: s.size, anchor: s.anchor ?? [Math.floor(s.size[0] / 2), s.size[1] - 3], sheet: { walk: s.walk, walkMs: s.walkMs ?? 200, turn: s.turn ?? null, end: s.end ?? [] } });
+    view.dancers = view.dancers.map(({ character, sprite: file, sheet, ...d }) => ({
       ...d,
-      sprite: sheet ? { url: asset(sheet), strip: true, ...STRIP } : sprite(character),
+      sprite: file && sheet ? laid(file, sheet) : file ? { url: asset(file), strip: true, ...STRIP } : sprite(character),
     }));
     return view;
   },
@@ -3564,7 +3646,36 @@ module.exports = {
   // Every cell a route covers (validation: each must be floor).
   const routeCells = (route) => (route.length === 1 ? [route[0]] : ring(route));
 
-  const api = { showBeats, songAt, roundStart, nextRound, routeFor, dancing, dancerAt, routeProblem, routeCells };
+  // dance:v2 — the way a step goes: e, w, n or s (a slant counts as its side), null for no step
+  const stepDir = (dx, dy) => (dx > 0 ? 'e' : dx < 0 ? 'w' : dy < 0 ? 'n' : dy > 0 ? 's' : null);
+  const inArea = (at, [x, y, w, h]) => at.x >= x && at.x < x + w && at.y >= y && at.y < y + h;
+
+  // dance:v2 — the look a dancer wears where it stands now (a look: { song, area, sprite }), or null
+  const lookAt = (dancer, info, at) => (info && at ? (dancer.looks ?? []).find((l) => l.song === info.number && inArea(at, l.area)) ?? null : null);
+
+  // dance:v2 — which frame of a dancer's sheet shows at `now` in the song `info` (from songAt).
+  // sheet: { walk: [frame…], walkMs, turn?: { e|w|n|s: frame }, end?: [frame…] }
+  //   - the song's last beats play `end`, one frame a beat (a spin, then a bow)
+  //   - a beat whose step goes another way than the step before shows that way's `turn` frame
+  //   - otherwise the walk cycle, a frame every walkMs (in place too: they dance where they wait)
+  // Reduced motion holds the first walk frame.
+  function sheetFrame(sheet, dancer, info, now, beatMs, reduce = false) {
+    const walk = Array.isArray(sheet.walk) && sheet.walk.length ? sheet.walk : [0];
+    if (reduce || !info) return walk[0];
+    const end = sheet.end ?? [];
+    const left = info.beats - Math.floor(Math.max(0, now - info.startAt) / beatMs);
+    if (end.length && left <= end.length) return end[end.length - left];
+    if (sheet.turn) {
+      const at = dancerAt(dancer, info, now, beatMs);
+      const before = now - beatMs >= info.startAt ? dancerAt(dancer, info, now - beatMs, beatMs) : null;
+      const way = at && stepDir(at.x - at.prevX, at.y - at.prevY);
+      const was = before && stepDir(before.x - before.prevX, before.y - before.prevY);
+      if (way && way !== was && sheet.turn[way] !== undefined) return sheet.turn[way];
+    }
+    return walk[Math.floor(Math.max(0, now - info.startAt) / (sheet.walkMs ?? 200)) % walk.length];
+  }
+
+  const api = { showBeats, songAt, roundStart, nextRound, routeFor, dancing, dancerAt, routeProblem, routeCells, stepDir, lookAt, sheetFrame };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Dance = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -5915,12 +6026,20 @@ function clueView(caseDef, clueId, level = 'guide') {
   return { id: c.id, kind: c.kind, name: c.name, description: level !== 'guide' && c.terse && c.image ? c.terse : c.description, spots: Boolean(c.spots?.length), speaker: c.speaker ?? null, time: c.time ?? null, day: c.day ?? null, imageUrl: assetUrl(caseDef, c.image) };
 }
 
+// A scene's figure (scenefigure:v1) as a picture address; the file name stays on the server's side of it.
+function sceneView(caseDef, scene) {
+  const { image, ...figure } = scene.figure;
+  return { ...scene, figure: caseDef ? { ...figure, url: assetUrl(caseDef, image) } : null };
+}
+
 // A gimmick as players may see it, with whatever the story changed on it (setGimmick).
-function gimmickView(g, gm) {
+// me: the player the view is for, when it is drawn on their own map (a dance's shade where they stand)
+function gimmickView(g, gm, me = null) {
   const { room } = g;
   const mod = gimmicks.get(gm.type);
   const config = room.world.gimmickPatches?.[gm.id] ? { ...gm.config, ...room.world.gimmickPatches[gm.id] } : gm.config;
-  const view = mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length, day: room.day, stage: room.stage });
+  const view = mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length, day: room.day, stage: room.stage, now: g.now() });
+  if (me) mod.playerView?.(view, config, room.world.gimmicks[gm.id], me);
   // a guard drawn as its character walking the route, when the case gives that person a patrol sheet
   if (view.character && gm.type === 'guard_patrol') view.sprite = spriteView(g.caseDef, view.character, 'patrolSprite');
   mod.resolveView?.(view, { asset: (name) => assetUrl(g.caseDef, name), sprite: (characterId) => spriteView(g.caseDef, characterId) });
@@ -5958,7 +6077,7 @@ function mapView(g, me) {
     players: room.order.filter((id) => room.players[id].location === loc.id).map((id) => ({ id, x: room.players[id].x, y: room.players[id].y, facing: room.players[id].facing ?? 's', hidden: Boolean(room.players[id].hiddenIn), seated: Boolean(room.players[id].seatedAt) })),
     gimmicks: ix.gimmicks
       .filter((gm) => gimmicks.get(gm.type).location(gm.config) === loc.id)
-      .map((gm) => gimmickView(g, gm)),
+      .map((gm) => gimmickView(g, gm, me)),
     // tile layers (tilestate:v1) of this place only: light zones with their rectangles and on/off,
     // footprints with their direction and whether they are still clear
     tileLayers: tileView(g, loc.id),
@@ -6153,7 +6272,7 @@ function buildView(entry, pid, isConnected, gameClock = () => Date.now()) {
       briefings: started ? (caseDef.pkg.teams ?? []).filter((t) => me.team === '*' || me.team === t.id).filter((t) => t.briefing).map((t) => ({ team: t.id, name: t.name, text: t.briefing })) : [],
     },
     // a notice meant for one player (a dance slot's line) reaches only that player
-    notices: room.notices.filter((n) => !n.to || n.to === pid).slice(-20),
+    notices: room.notices.filter((n) => !n.to || n.to === pid).slice(-20).map((n) => (n.scene?.figure ? { ...n, scene: sceneView(caseDef, n.scene) } : n)),
     chat: (room.chat ?? []).slice(-60),
   };
   if (!started) return view;
@@ -6414,8 +6533,10 @@ const ASSET_RE = /^[a-z0-9][a-z0-9_.-]{0,63}\.(svg|png|webp|jpg)$/;
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_W = 40;
 const MAX_H = 30;
+// scenefigure:v1: an event's scene may show a few frames of a picture (a person unmasking) over its lines
+const SCENE_FIGURE = 'scenefigure:v1';
 
-const supportedFeatures = () => new Set([...CORE_FEATURES, ...gimmicks.features(), ...puzzles.features(), stops.FEATURE, tilestate.FEATURE, playerstat.FEATURE, dayart.FEATURE]);
+const supportedFeatures = () => new Set([...CORE_FEATURES, ...gimmicks.features(), ...puzzles.features(), stops.FEATURE, tilestate.FEATURE, playerstat.FEATURE, dayart.FEATURE, SCENE_FIGURE]);
 
 const isId = (v) => typeof v === 'string' && ID_RE.test(v) && !(v in Object.prototype);
 
@@ -6478,6 +6599,8 @@ function buildContext(pkg, errors) {
   const tasks = collectTasks(pkg, new Set());
   const ctx = {
     refs,
+    // the features the package asks for (a gimmick's later fields need theirs, such as dance:v2)
+    features: new Set(Array.isArray(pkg.requiredFeatures) ? pkg.requiredFeatures : []),
     noActor: false,
     gimmickIds: new Set((Array.isArray(pkg.gimmicks) ? pkg.gimmicks : []).map((gm) => gm?.id)),
     // gimmick:dance: dance id → how many songs it has (the song condition)
@@ -6812,14 +6935,28 @@ function validateCase(pkg) {
     });
   });
 
+  // scenefigure:v1: { image, frameSize: [w, h], frames: [[column, row], …] 1~8, ms?: each frame, loop?: false }
+  // played once over the scene's lines (the last frame held), or round and round with loop
+  const checkFigure = (fig, fp) => {
+    if (!pkg.requiredFeatures.includes(SCENE_FIGURE)) errors.push(`${fp}: requiredFeatures에 '${SCENE_FIGURE}'를 적어야 해요`);
+    if (!checkObject(fig, { image: f.str(80), frameSize: f.any(), frames: f.any(), ms: f.int(100, 5000, true), loop: f.bool(true) }, fp, noActor, errors)) return;
+    if (!assets.has(fig.image)) errors.push(`${fp}.image: assets에 없는 파일 '${fig.image}'`);
+    const size = fig.frameSize;
+    if (!Array.isArray(size) || size.length !== 2 || !size.every((n) => Number.isInteger(n) && n >= 1 && n <= 128)) errors.push(`${fp}.frameSize: [가로, 세로] 1~128 정수여야 해요`);
+    const ok = Array.isArray(fig.frames) && fig.frames.length >= 1 && fig.frames.length <= 8
+      && fig.frames.every((c) => Array.isArray(c) && c.length === 2 && c.every((n) => Number.isInteger(n) && n >= 0 && n <= 31));
+    if (!ok) errors.push(`${fp}.frames: 그림의 [열, 줄] 칸 1~8개의 배열이어야 해요 (예: [[4, 0], [5, 0]])`);
+  };
+
   // events: world-level, so no acting player
   (Array.isArray(pkg.events) ? pkg.events : []).forEach((e, i) => {
     const p = `events[${i}]`;
     if (!checkObject(e, { id: f.any(), auto: f.bool(), when: f.condition(true), effects: f.effects(), repeatable: f.bool(true), notice: f.str(200, true), scene: f.any(true) }, p, noActor, errors)) return;
     // a short full-screen scene everyone sees when it fires, a few lines read one at a time
-    if (e.scene !== undefined && checkObject(e.scene, { title: f.str(40), lines: f.any() }, `${p}.scene`, noActor, errors)) {
+    if (e.scene !== undefined && checkObject(e.scene, { title: f.str(40), lines: f.any(), figure: f.any(true) }, `${p}.scene`, noActor, errors)) {
       const { lines } = e.scene;
       if (!Array.isArray(lines) || lines.length < 1 || lines.length > 6 || !lines.every((x) => typeof x === 'string' && x.trim() && x.length <= 160)) errors.push(`${p}.scene.lines: 160자 이하 문장 1~6개의 배열이어야 해요`);
+      if (e.scene.figure !== undefined) checkFigure(e.scene.figure, `${p}.scene.figure`);
     }
     if (e.auto && e.repeatable) errors.push(`${p}: 자동 이벤트는 반복할 수 없어요`);
     if (e.auto && e.when === undefined) errors.push(`${p}.when: 자동 이벤트에는 조건이 필요해요`);
@@ -7005,7 +7142,7 @@ function validateConditionFor(caseDef, cond) {
   return errors;
 }
 
-module.exports = { FORMAT_VERSION, CORE_FEATURES, supportedFeatures, validateCase, compileCase, validateConditionFor, isScalar, CASE_ID_RE };
+module.exports = { FORMAT_VERSION, CORE_FEATURES, SCENE_FIGURE, supportedFeatures, validateCase, compileCase, validateConditionFor, isScalar, CASE_ID_RE };
 
 }],
 "src/engine/overview.js": [{}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {

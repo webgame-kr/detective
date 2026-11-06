@@ -1,6 +1,6 @@
 import { api, seats, Connection, h } from './net.js';
 import { drawMap, pickTarget, TILE, ART_SCALE } from './map.js';
-import { looksReady, lookSet, lookThumb, spriteThumb, animLength, findLook } from './sprites.js';
+import { looksReady, lookSet, lookThumb, spriteThumb, animLength, findLook, loadImage } from './sprites.js';
 import { caseFolder, caseSheet, clueCard, stepIndicator, icon, playersText, withParticle, DIFFICULTY, drawerGroup, pageStrip, onPageKeys } from './ui.js';
 import { drawMinimap, focusOf } from './minimap.js';
 import { mountNoteUI } from './noteui.js';
@@ -405,8 +405,38 @@ function queueScene(scene) {
 
 function playScenes() {
   if (sceneAt || !$('shift').hidden || !sceneQueue.length) return;
-  sceneAt = { scene: sceneQueue.shift(), line: 0 };
+  const scene = sceneQueue.shift();
+  sceneAt = { scene, line: 0, figure: scene.figure?.url ? sceneFigure(scene.figure) : null };
   drawScene();
+}
+
+// A scene's figure (scenefigure:v1): a few frames of a picture over the lines, such as a person
+// taking off a mask. Played once from the scene's first line and held on its last frame (or round
+// and round with loop); reduced motion shows the last frame only. The same canvas stays through
+// every line, so the motion is not restarted by turning a line.
+function sceneFigure(fig) {
+  const scale = 4;
+  const [w, hgt] = fig.frameSize;
+  const canvas = h('canvas', { class: 'scene-figure', width: w * scale, height: hgt * scale, 'aria-hidden': 'true' });
+  const img = loadImage(fig.url);
+  const ms = fig.ms ?? 700;
+  const started = performance.now();
+  const step = () => {
+    if (sceneAt?.figure !== canvas) return;
+    const t = performance.now() - started;
+    const n = fig.frames.length;
+    const k = reduceMotion ? n - 1 : fig.loop ? Math.floor(t / ms) % n : Math.min(n - 1, Math.floor(t / ms));
+    if (img.complete && img.naturalWidth) {
+      const cx = canvas.getContext('2d');
+      cx.imageSmoothingEnabled = false;
+      cx.clearRect(0, 0, canvas.width, canvas.height);
+      const [col, row] = fig.frames[k];
+      cx.drawImage(img, col * w, row * hgt, w, hgt, 0, 0, w * scale, hgt * scale);
+    }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return canvas;
 }
 
 function drawScene() {
@@ -417,6 +447,7 @@ function drawScene() {
   sceneEl.replaceChildren(h('div', { class: 'shift-card scene-card' },
     h('span', { class: 'shift-kicker', 'aria-hidden': 'true' }, scene.kicker ?? 'SCENE'),
     h('strong', { class: 'scene-title' }, scene.title),
+    sceneAt.figure,
     h('p', { class: 'scene-line', 'aria-live': 'polite' }, scene.lines[line]),
     h('div', { class: 'scene-dots', 'aria-hidden': 'true' }, ...scene.lines.map((_, i) => h('i', { class: i <= line ? 'is-on' : '' }))),
     h('span', { class: 'shift-hint' }, last ? '누르면 닫혀요' : '누르면 다음 장면 · Esc 건너뛰기')));
