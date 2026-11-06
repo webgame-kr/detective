@@ -250,6 +250,42 @@ function sightBlocker(m) {
   return (x, y) => m.tiles[y]?.[x] !== '.' || solid.has(`${x}:${y}`) || shut.has(`${x}:${y}`);
 }
 
+// Tile layers (tilestate:v1): a light zone that is off is darkened with a black checker dither over
+// the painted floor, under furniture, things and people. The dots are two art pixels across so they
+// stay a dither, not a grey blur, when the map is shown small on a phone. No fades: on or off.
+const dithers = new Map();
+function ditherPattern(ctx, dot) {
+  if (!dithers.has(dot)) {
+    const c = document.createElement('canvas');
+    c.width = dot * 2;
+    c.height = dot * 2;
+    const pc = c.getContext('2d');
+    pc.fillStyle = '#000';
+    pc.fillRect(0, 0, dot, dot);
+    pc.fillRect(dot, dot, dot, dot);
+    dithers.set(dot, c);
+  }
+  return ctx.createPattern(dithers.get(dot), 'repeat');
+}
+
+// Footprints (prints layers) come first: one cell of their sheet per print, the column for its
+// direction, the clear row or the smudged one below it. A covered print is not sent at all.
+export function drawTileLayers(ctx, m, T, S) {
+  for (const l of (m.tileLayers ?? []).filter((x) => x.kind === 'prints')) {
+    const sheet = loadImage(l.image);
+    if (!sheet.complete || !sheet.naturalWidth) continue;
+    for (const [x, y, dir, value] of l.cells) {
+      const col = l.frames[dir];
+      if (col === undefined) continue;
+      ctx.drawImage(sheet, col * l.size, value === 'smudged' ? l.size : 0, l.size, l.size, x * T, y * T, T, T);
+    }
+  }
+  const dark = (m.tileLayers ?? []).filter((l) => l.kind === 'light').flatMap((l) => l.zones.filter((z) => z.value === 'off'));
+  if (!dark.length) return;
+  ctx.fillStyle = ditherPattern(ctx, S > 1 ? 2 * S : 4);
+  for (const z of dark) for (const [x, y, w, h] of z.rects) ctx.fillRect(x * T, y * T, w * T, h * T);
+}
+
 // Loud floors marked faintly so they can be seen before stepping on them: wood grain, metal grid.
 function drawFloor(ctx, m, T) {
   if (!m.floor) return;
@@ -322,6 +358,9 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
   const bg = art ? loadImage(art.url) : null;
   if (bg?.complete && bg.naturalWidth) ctx.drawImage(bg, 0, 0, bg.naturalWidth * S, bg.naturalHeight * S);
   else drawTiles(ctx, m, T);
+  // floor → tile layers → furniture fronts, things and people (the fronts are cut from the plain
+  // picture but only ever erase people, so a dark zone stays dark over a shelf's top too)
+  drawTileLayers(ctx, m, T, S);
 
   for (const e of m.exits) {
     // a locked door with its own picture shows only that picture, standing on the tile's bottom edge
@@ -479,7 +518,7 @@ export function drawMap(canvas, state, { focusId, now = 0, motion = new Map(), t
     return anchors;
   }
   for (const o of m.objects) {
-    if (art && o.kind === 'inspect' && o.id !== focusId) continue;
+    if (art && (o.kind === 'inspect' || o.kind === 'puzzle' || o.kind === 'panel') && o.id !== focusId) continue;
     if (art && o.kind === 'talk' && o.sprite) label(ctx, o.label, o.x * T + T / 2, spriteTop(o.y), { font: '12px system-ui, sans-serif' });
     else label(ctx, o.label, o.x * T + T / 2, o.y * T + T + 9, { font: art ? '12px system-ui, sans-serif' : undefined });
   }

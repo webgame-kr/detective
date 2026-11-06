@@ -44,6 +44,16 @@
 .toast.good .toast__icon { --ic: #3E5E52; --ic-hi: #5C8072; --ic-lo: #2B443B; color: #F4EBD6; }
 .toast.notice .toast__icon { --ic: #9CABB9; --ic-hi: #CBD5DF; --ic-lo: #7D8C9A; }
 .toast.error .toast__icon { --ic: #A64A2E; --ic-hi: #C46A4C; --ic-lo: #7A3420; color: #F4EBD6; }
+/* the snow HUD's toasts (ui_snowhud): ink icons on an ice, red, green or sand cell */
+.toast.cold .toast__icon { --ic: #DCE8F4; --ic-hi: #E7EFF7; --ic-lo: #B0B9C3; }
+.toast.freeze .toast__icon { --ic: #C84A40; --ic-hi: #DA867F; --ic-lo: #A03B33; }
+.toast.prints .toast__icon { --ic: #3E5E52; --ic-hi: #7E938B; --ic-lo: #314B41; }
+.toast.prints_blur .toast__icon { --ic: #E2CF9A; --ic-hi: #EBDFBB; --ic-lo: #B4A57B; }
+.toast.cold .toast__icon svg, .toast.freeze .toast__icon svg, .toast.prints .toast__icon svg, .toast.prints_blur .toast__icon svg { width: 16px; height: 16px; }
+/* a stop's broadcasts (ui_station): the train on an orange cell before it leaves, on grey once gone */
+.toast.stop_warn .toast__icon { --ic: #F2A050; --ic-hi: #F8C690; --ic-lo: #C47A34; }
+.toast.stop_missed .toast__icon { --ic: #9CABB9; --ic-hi: #CBD5DF; --ic-lo: #7D8C9A; }
+.toast.stop_warn .toast__icon svg, .toast.stop_missed .toast__icon svg { width: 16px; height: 16px; }
 .toast__text { flex: 1; min-width: 0; }
 
 /* the same toast again: one box with a count */

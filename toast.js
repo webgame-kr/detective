@@ -4,7 +4,9 @@
 // Errors stay longer and close when pressed. Time stops while a toast is pointed at or focused.
 import { h } from './net.js';
 
-const KINDS = ['info', 'good', 'notice', 'error'];
+// cold / freeze: warmth in the snow (playerstat:v1); prints / prints_blur: footprints photographed
+// stop_warn / stop_missed: the train's departure broadcast and the train gone without you (stops:v1)
+const KINDS = ['info', 'good', 'notice', 'error', 'cold', 'freeze', 'prints', 'prints_blur', 'stop_warn', 'stop_missed'];
 const SHOWN_MS = 3800;
 const ERROR_MS = 6000;
 const MAX = 3;
@@ -17,10 +19,16 @@ const ICONS = {
   notice: '<path d="M5 1h2v1H5zM3 2h6v1H3zM2 3h8v5H2zM1 8h10v1H1z"/><path d="M5 10h2v1H5z"/>',
   error: '<path d="M5 1h2v7H5zM5 9h2v2H5z"/>',
 };
+// 16×16 dot icons of the snow HUD (ui_snowhud): a snowflake, two footprints
+const FLAKE16 = '<path d="M7 0h2v16H7zM0 7h16v2H0zM3 3h2v2H3zM11 3h2v2h-2zM3 11h2v2H3zM11 11h2v2h-2z"/>';
+const PRINTS16 = '<path d="M3 1h4v7H3zM3 9h4v3H3zM9 4h4v7H9zM9 12h4v3H9z"/>';
+// a train from the front (ui_station): body with a window, bumper, wheels
+const TRAIN16 = '<path fill-rule="evenodd" d="M4 1h8v1H4zM3 2h10v9H3zM5 3v2h6V3zM2 11h12v1H2zM4 12h2v2H4zM10 12h2v2h-2z"/>';
+const ICONS16 = { cold: FLAKE16, freeze: FLAKE16, prints: PRINTS16, prints_blur: PRINTS16, stop_warn: TRAIN16, stop_missed: TRAIN16 };
 
 function kindIcon(kind) {
   const cell = h('span', { class: 'toast__icon', 'aria-hidden': 'true' });
-  cell.innerHTML = `<svg viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg">${ICONS[kind]}</svg>`;
+  cell.innerHTML = ICONS16[kind] ? `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">${ICONS16[kind]}</svg>` : `<svg viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg">${ICONS[kind]}</svg>`;
   return cell;
 }
 

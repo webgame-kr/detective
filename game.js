@@ -9,6 +9,8 @@ import { SPEED, savedSpeed, saveSpeed } from './typewriter.js';
 import { recordCase } from './casebook.js';
 import { briefingAnim } from './briefing-anim.js';
 import { toast, clueToast } from './toast.js';
+import { PuzzleWindow } from './puzzle.js';
+import { PanelWindow } from './panel.js';
 
 const code = location.hash.slice(1).toUpperCase(); // artifact: the room code rides in the hash
 const $ = (id) => document.getElementById(id);
@@ -254,6 +256,9 @@ function begin(token) {
 function render() {
   if (!state) return;
   const s = state;
+  // an open puzzle board follows the room: another player's move redraws it, leaving the board closes it
+  puzzleWin.sync(s.room.stage === 'day' ? s.puzzle ?? null : null);
+  panelWin.sync(s.room.stage === 'day' ? s.panel ?? null : null);
   document.body.dataset.stage = s.room.stage;
   $('caseTitle').textContent = s.case?.title ?? '케이스 미선택';
   $('roomName').textContent = s.room.settings.name;
@@ -299,7 +304,7 @@ function render() {
   for (const n of s.notices) {
     if (n.id <= seenNotice) continue;
     if (n.scene) queueScene({ kicker: `DAY ${n.day}`, ...n.scene });
-    else toast(n.text, 'notice');
+    else toast(n.text, n.kind ?? 'notice');
   }
   seenNotice = Math.max(seenNotice, s.notices.at(-1)?.id ?? 0);
 
@@ -757,6 +762,8 @@ function renderField() {
   hud.setGoal(goalProgress());
   hud.setEndDay(endDayButton());
   renderSecurity();
+  renderStats();
+  renderStop();
   hud.setCount('notebook', s.notebook.clues.length);
   hud.setCount('party', `${s.players.filter((p) => p.connected).length}/${s.room.settings.capacity}`);
   // what arrived while its note was closed; the first view sets the baseline
@@ -1002,6 +1009,57 @@ function renderSecurity() {
     ...(s.active ? [] : [h('span', { class: 'nui-security__note' }, '아직 쌓이지 않아요')]));
 }
 
+// A player stat (playerstat:v1, warmth in the snow) right under the date plate, kept when the corner
+// folds: one snowflake cell per point, red at the warning line, dark once lost; dim indoors.
+const statBox = h('div', { class: 'px drop nui-stat', hidden: true, role: 'status' });
+function renderStats() {
+  const st = state.stats?.[0];
+  const show = Boolean(st && fieldMode());
+  if (show && !statBox.isConnected && hud.corner) hud.corner.insertBefore(statBox, hud.corner.querySelector('.nui-corner__top')?.nextSibling ?? null);
+  if (statBox.hidden === show) statBox.hidden = !show;
+  if (!show) return;
+  const key = `${st.label}/${st.value}/${st.max}/${st.low}/${st.outside}`;
+  if (statBox.dataset.key === key) return;
+  statBox.dataset.key = key;
+  statBox.classList.toggle('is-low', st.low);
+  statBox.classList.toggle('is-inside', !st.outside);
+  statBox.replaceChildren(
+    h('span', { class: 'nui-stat__label' }, st.label),
+    h('span', { class: 'nui-stat__cells', role: 'img', 'aria-label': `${st.label} ${st.value}/${st.max}` },
+      ...Array.from({ length: st.max }, (_, i) => {
+        const cell = h('i', { class: i < st.value ? (st.low ? 'is-low' : 'is-on') : 'is-off' });
+        cell.innerHTML = FLAKE;
+        return cell;
+      })));
+}
+// The stop the train makes today (stops:v1, ui_station) as a strip under the date plate, kept when
+// the corner folds: sand while it stands ("정차 중", looks left before it leaves), orange after the
+// departure broadcast, grey for whoever missed it and waits in the station until the night.
+const stopBox = h('div', { class: 'px drop nui-stop', hidden: true, role: 'status', 'aria-live': 'polite' });
+function renderStop() {
+  const st = state.stop;
+  const show = Boolean(st && fieldMode());
+  if (show && !stopBox.isConnected && hud.corner) hud.corner.insertBefore(stopBox, statBox.isConnected ? statBox.nextSibling : hud.corner.querySelector('.nui-corner__top')?.nextSibling ?? null);
+  if (stopBox.hidden === show) stopBox.hidden = !show;
+  if (!show) return;
+  const key = JSON.stringify(st);
+  if (stopBox.dataset.key === key) return;
+  stopBox.dataset.key = key;
+  const [title, line] = st.leftBehind
+    ? [`${st.name} 대합실`, '열차를 놓쳤어요 · 밤에 다음 열차로 합류해요']
+    : st.warned
+      ? [`${st.name} · 출발 2분 전`, `역 조사 ${st.left}번 남았어요${st.here ? ' · 차장에게 말하면 바로 타요' : ''}`]
+      : [`${st.name} 정차 중`, `출발까지 역 조사 ${st.left}번 · ${st.here ? '차장에게 말하면 바로 타요' : '정차하는 동안 내릴 수 있어요'}`];
+  stopBox.className = `px drop nui-stop${st.leftBehind ? ' is-left' : st.warned ? ' is-warn' : ''}`;
+  const icon = h('span', { class: 'nui-stop__icon', 'aria-hidden': 'true' });
+  icon.innerHTML = TRAIN;
+  stopBox.replaceChildren(icon, h('b', { class: 'nui-stop__title' }, title), h('span', { class: 'nui-stop__line' }, line));
+}
+// a train seen from the front (16×16 dots): body, window, bumper and wheels
+const TRAIN = '<svg viewBox="0 0 16 16"><path d="M4 1h8v1H4zM3 2h10v9H3zM2 11h12v1H2zM4 12h2v2H4zM10 12h2v2h-2z"/><path class="win" d="M5 3h6v2H5z"/></svg>';
+// the snowflake of the HUD cells and the cold toasts: a cross with four dots (16×16 dots)
+const FLAKE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 0h2v16H7zM0 7h16v2H0zM3 3h2v2H3zM11 3h2v2h-2zM3 11h2v2H3zM11 11h2v2h-2z"/></svg>';
+
 const miniBox = h('button', { type: 'button', class: 'px drop nui-mini', hidden: true, title: '전체 지도 (M)', 'aria-label': '전체 지도 열기 (M)', onclick: () => toggleFullMap(true) },
   miniCanvas, h('span', { class: 'nui-mini__foot' }, miniName, h('kbd', {}, 'M')));
 const fullCanvas = h('canvas', { class: 'full-map__canvas' });
@@ -1110,7 +1168,7 @@ function placeWorld(canvas, anchors) {
   const focus = hud.setWorld(anchors, at, { speakingId: talking, chat: liveBubbles() });
   fadeHudOver(anchors, at);
   const target = !state.dialogue && focus ? pickTarget(state, facing) : null;
-  hud.setBubble(target ? { kind: focus.kind, text: target.label, verb: target.kind === 'talk' ? '대화하기' : target.kind === 'hide' ? (state.me.hiddenIn === target.id ? '나오기' : '숨기') : target.kind === 'station' ? '앉기' : target.done ? '다시 보기' : '조사하기', x: focus.x, y: focus.y } : null, at);
+  hud.setBubble(target ? { kind: focus.kind, text: target.label, verb: target.kind === 'talk' ? '대화하기' : target.kind === 'puzzle' ? (target.done ? '다시 보기' : '맞춰 보기') : target.kind === 'panel' ? '조작하기' : target.kind === 'hide' ? (state.me.hiddenIn === target.id ? '나오기' : '숨기') : target.kind === 'station' ? '앉기' : target.done ? '다시 보기' : '조사하기', x: focus.x, y: focus.y } : null, at);
 }
 
 // A HUD panel turns nearly clear while you, a teammate or a person you can talk to stands under it.
@@ -1191,7 +1249,7 @@ function renderMapHud() {
   $('devices').textContent = [...state.devices.map((d) => `${d.label}: ${d.value}`), state.room.stageLabel].join(' · ');
   $('focusHint').replaceChildren(
     target
-      ? h('span', {}, h('kbd', {}, 'E'), ` ${target.label} ${target.kind === 'talk' ? '말 걸기' : target.done ? '다시 보기' : '조사'}`)
+      ? h('span', {}, h('kbd', {}, 'E'), ` ${target.label} ${target.kind === 'talk' ? '말 걸기' : target.done ? '다시 보기' : target.kind === 'puzzle' ? '맞춰 보기' : target.kind === 'panel' ? '조작하기' : '조사'}`)
       : h('span', { class: 'muted' }, '가까이에 조사할 대상이 없어요. 대상 옆 칸으로 가 보세요.'),
   );
 }
@@ -2460,7 +2518,7 @@ function routeTo(tx, ty) {
 
 function walkTo(clientX, clientY) {
   const canvas = $('mapCanvas');
-  if (!canvas || !fieldMode() || state.dialogue || !$('modal').hidden || hud.current()) return;
+  if (!canvas || !fieldMode() || state.dialogue || !$('modal').hidden || windowOpen() || hud.current()) return;
   const r = canvas.getBoundingClientRect();
   const T = state.map.art ? state.map.art.tile * ART_SCALE : TILE;
   const tx = Math.floor(((clientX - r.left) * (canvas.width / r.width)) / T);
@@ -2521,6 +2579,12 @@ function sendSteps() {
       if (r.noise && batch[i]?.target) noiseMarks.push({ x: batch[i].target.x, y: batch[i].target.y, at: performance.now(), kind: r.noise });
     });
     if (ok && res.body.reason === 'got_up' && res.body.message) toast(res.body.message, 'info');
+    // warmth (playerstat:v1): told to the walker only; the snow refused while still too cold
+    for (const r of results) for (const m of r.stat ?? []) toast(m.text, m.kind === 'zero' ? 'freeze' : m.kind === 'warn' ? 'cold' : 'info');
+    if (ok && res.body.reason === 'cold' && Date.now() - lastLockToast > 1500) {
+      lastLockToast = Date.now();
+      toast(res.body.message, 'cold');
+    }
     if (ok && res.body.reason === 'locked' && Date.now() - lastLockToast > 1500) {
       lastLockToast = Date.now();
       toast(res.body.message, 'error');
@@ -2631,8 +2695,16 @@ async function interact(objectId = null) {
   // a hiding place or a monitor desk: a short line, no window
   if (res.body.kind === 'hide') return res.body.text && toast(res.body.text, 'info');
   if (res.body.kind === 'station') return toast(`${res.body.label}에 앉았어요. 감시 화면이 지도에 보여요. 움직이면 일어나요.`, 'info');
+  // a puzzle board opens in its own window
+  if (res.body.kind === 'puzzle') return puzzleWin.sync(res.body.puzzle);
+  // a switchboard (tilestate:v1) too
+  if (res.body.kind === 'panel') return panelWin.sync(res.body.panel);
   if (res.body.kind !== 'inspect') return;
   const r = res.body;
+  // footprints photographed (tilestate:v1 prints record): how clear they still were
+  if (r.record?.percent !== undefined) {
+    toast(r.record.sharp ? `발자국 사진을 찍었어요 · 선명한 자국 ${r.record.percent}%` : `발자국 사진을 찍었어요 · 많이 흐려져 방향만 알 수 있어요 (선명 ${r.record.percent}%)`, r.record.sharp ? 'prints' : 'prints_blur');
+  }
   openModal(
     h('p', { class: 'eyebrow' }, r.revisit ? '이미 조사한 곳' : '조사'),
     h('h3', {}, r.label),
@@ -2687,14 +2759,14 @@ for (const btn of document.querySelectorAll('#touchpad [data-dir]')) {
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 $('padAct').addEventListener('click', () => {
-  if (state?.room.stage === 'day' && !state.dialogue && !dialogueBox.isActive()) interact();
+  if (state?.room.stage === 'day' && !state.dialogue && !dialogueBox.isActive() && !windowOpen()) interact();
 });
 
 const compactScreen = () => matchMedia('(max-width: 760px), (max-height: 520px)').matches;
 function renderTouchpad() {
   if (!state) return;
   // on a phone an open note covers the map, so the pad steps aside until it closes
-  const show = fieldMode() && padWanted() && !state.dialogue && !dialogueBox.isActive() && !(compactScreen() && hud.current());
+  const show = fieldMode() && padWanted() && !state.dialogue && !dialogueBox.isActive() && !windowOpen() && !(compactScreen() && hud.current());
   if ($('touchpad').hidden === show) $('touchpad').hidden = !show;
   if (!show) {
     for (const b of document.querySelectorAll('#touchpad .is-down')) {
@@ -2757,6 +2829,33 @@ looksReady.then(() => {
   if (state) render();
 });
 
+// the puzzle window (puzzle:v1): the server holds the board and judges it
+const puzzleWin = new PuzzleWindow({
+  send: (payload) => conn.act('puzzle', payload),
+  onGained: (list) => list.forEach(badgeToast),
+  onOpenChange(open) {
+    if (open) hud.close();
+    hud.setShortcutsEnabled(!open);
+    held = null;
+    renderTouchpad();
+  },
+});
+
+// the switchboard window (tilestate:v1): the server flips the circuits and says what is lit
+const panelWin = new PanelWindow({
+  send: (payload) => conn.act('panel', payload),
+  onOpenChange(open) {
+    if (open) hud.close();
+    hud.setShortcutsEnabled(!open);
+    held = null;
+    renderTouchpad();
+  },
+});
+// a window over the map (a puzzle board or a switchboard) holds the keyboard and the touchpad
+function windowOpen() {
+  return puzzleWin.isOpen() || panelWin.isOpen();
+}
+
 const dialogueBox = new DialogueBox($('dialogue'), {
   act: (type, payload) => act(type, payload),
   // what can be shown: my notebook and the shared board, without duplicates
@@ -2807,7 +2906,7 @@ new MutationObserver(placeToasts).observe($('dialogue'), { attributes: true, att
 addEventListener('resize', placeToasts);
 
 const hud = mountNoteUI($('hud'), {
-  enabled: () => fieldMode() && !state.dialogue && !dialogueBox.isActive() && $('modal').hidden,
+  enabled: () => fieldMode() && !state.dialogue && !dialogueBox.isActive() && $('modal').hidden && !windowOpen(),
   onRender: renderNote,
   onPrompt: () => interact(),
   onEndDay: () => endDay(),

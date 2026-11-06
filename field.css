@@ -588,6 +588,50 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui-security__boxes i.is-on { background: #D4524A; }
 .nui-security__note { opacity: 0.7; }
 
+/* a player stat (playerstat:v1): warmth as snowflake cells right under the date plate (ui_snowhud).
+   Ice cells while warm, red ones at the warning line, dark ones once lost; dim indoors */
+.nui .nui-stat { display: flex; align-items: center; gap: 9px; padding: 6px 9px 6px 12px; font-family: var(--font-body); font-size: var(--fs-label); font-weight: 700; color: var(--n-ink); }
+.nui-stat[hidden] { display: none; }
+.nui-stat__cells { display: flex; gap: 4px; }
+.nui-stat__cells i {
+  --c: #DCE8F4; --c-hi: #F2F8FC; --c-lo: #A9BCD0; --flake: #4C6E9A;
+  display: grid; place-items: center; width: 24px; height: 24px; box-sizing: border-box; background: var(--c);
+  box-shadow: inset 0 0 0 2px #2E2A24, inset 4px 4px 0 0 var(--c-hi), inset -4px -4px 0 0 var(--c-lo);
+}
+.nui-stat__cells i.is-low { --flake: #C84A40; }
+.nui-stat__cells i.is-off { --c: #3A3E52; --c-hi: #4A4E62; --c-lo: #2A2E3E; --flake: #5A5E72; }
+.nui-stat__cells svg { width: 16px; height: 16px; fill: var(--flake); shape-rendering: crispEdges; }
+.nui-stat.is-inside { opacity: 0.6; }
+@media (max-width: 760px) {
+  .nui .nui-stat { gap: 6px; padding: 4px 6px 4px 9px; }
+  .nui-stat__cells { gap: 3px; }
+  .nui-stat__cells i { width: 20px; height: 20px; }
+  .nui-stat__cells svg { width: 12px; height: 12px; }
+}
+
+/* today's stop (stops:v1): a strip under the date plate (ui_station). Sand while the train stands,
+   orange after the departure broadcast, grey once it has gone without you */
+.nui .nui-stop {
+  --bg: #E2CF9A; --hi: #FFF9E8; --lo: #C9B67F;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px; padding: 9px 15px 9px 12px;
+  font-family: var(--font-body); font-size: 13px; line-height: 18px; color: var(--n-ink);
+}
+.nui-stop[hidden] { display: none; }
+.nui-corner > .nui-stop { max-width: min(640px, 100%); }
+.nui .nui-stop.is-warn { --bg: #F2A050; --hi: #F8C690; --lo: #C47A34; }
+.nui .nui-stop.is-left { --bg: #9CABB9; --hi: #CBD5DF; --lo: #7D8C9A; }
+.nui-stop__icon { flex: none; display: grid; width: 16px; height: 16px; }
+.nui-stop__icon svg { width: 16px; height: 16px; fill: var(--n-ink); shape-rendering: crispEdges; }
+.nui-stop__icon svg .win { fill: #F3E9D2; }
+.nui-stop__title { font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; }
+.nui-stop__line { color: var(--n-ink-muted); word-break: keep-all; }
+.nui-stop.is-warn .nui-stop__line, .nui-stop.is-left .nui-stop__line { color: var(--n-ink); }
+@media (max-width: 760px) {
+  .nui .nui-stop { gap: 0 9px; padding: 6px 9px; font-size: 12px; line-height: 16px; }
+  .nui-stop__title { font-size: 13px; line-height: 18px; }
+  .nui-stop__line { flex-basis: 100%; padding-left: 25px; }
+}
+
 /* the corner folds to the date plate (docs/ui-onescreen-spec.md 5.4): goals, minimap and warnings
    wait behind the fold button, which keeps today's goal count in view */
 .nui .nui-fold { display: flex; align-items: center; gap: 6px; align-self: stretch; margin: 0; padding: 0 12px; border-left: 3px solid var(--n-ink); background: transparent; box-shadow: none; font-family: var(--font-body); font-size: var(--fs-label); color: var(--n-ink); cursor: pointer; min-width: 44px; }
@@ -595,7 +639,7 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui .nui-fold__goal:empty { display: none; }
 .nui .nui-fold__goal { white-space: nowrap; }
 .nui-corner:not(.is-folded) .nui-fold__goal { display: none; }
-.nui-corner.is-folded > :not(.nui-corner__top) { display: none !important; }
+.nui-corner.is-folded > :not(.nui-corner__top):not(.nui-stat):not(.nui-stop) { display: none !important; }
 
 /* the date plate and, beside it, the goal count and the end-of-day button in one box
    (end-day button design: green = press now, brass = waiting for others, grey = something left) */
