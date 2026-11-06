@@ -6,7 +6,8 @@ import { h } from './net.js';
 
 // cold / freeze: warmth in the snow (playerstat:v1); prints / prints_blur: footprints photographed
 // stop_warn / stop_missed: the train's departure broadcast and the train gone without you (stops:v1)
-const KINDS = ['info', 'good', 'notice', 'error', 'cold', 'freeze', 'prints', 'prints_blur', 'stop_warn', 'stop_missed'];
+// dance_slot / dance_done / dance_loop: a dance's empty place stepped on, danced through, the show starting over (gimmick dance)
+const KINDS = ['info', 'good', 'notice', 'error', 'cold', 'freeze', 'prints', 'prints_blur', 'stop_warn', 'stop_missed', 'dance_slot', 'dance_done', 'dance_loop'];
 const SHOWN_MS = 3800;
 const ERROR_MS = 6000;
 const MAX = 3;
@@ -24,7 +25,10 @@ const FLAKE16 = '<path d="M7 0h2v16H7zM0 7h16v2H0zM3 3h2v2H3zM11 3h2v2h-2zM3 11h
 const PRINTS16 = '<path d="M3 1h4v7H3zM3 9h4v3H3zM9 4h4v7H9zM9 12h4v3H9z"/>';
 // a train from the front (ui_station): body with a window, bumper, wheels
 const TRAIN16 = '<path fill-rule="evenodd" d="M4 1h8v1H4zM3 2h10v9H3zM5 3v2h6V3zM2 11h12v1H2zM4 12h2v2H4zM10 12h2v2h-2z"/>';
-const ICONS16 = { cold: FLAKE16, freeze: FLAKE16, prints: PRINTS16, prints_blur: PRINTS16, stop_warn: TRAIN16, stop_missed: TRAIN16 };
+// an eighth note (ui_hud): stem, flag, head
+const NOTE16 = '<path d="M9 2h2v10H9zM11 3h2v2h-2zM13 5h1v3h-1zM5 10h4v4H5zM4 11h1v2H4z"/>';
+const ICONS16 = { cold: FLAKE16, freeze: FLAKE16, prints: PRINTS16, prints_blur: PRINTS16, stop_warn: TRAIN16, stop_missed: TRAIN16, dance_slot: NOTE16, dance_done: NOTE16, dance_loop: NOTE16 };
+export const NOTE_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true">${NOTE16}</svg>`;
 
 function kindIcon(kind) {
   const cell = h('span', { class: 'toast__icon', 'aria-hidden': 'true' });

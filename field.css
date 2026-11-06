@@ -632,6 +632,31 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
   .nui-stop__line { flex-basis: 100%; padding-left: 25px; }
 }
 
+/* a dance in this room (gimmick dance): the song strip under the date plate (ui_hud). Cream paper,
+   the note, "곡 3 · 「달빛」" in bold, the style small, a box per song: gone by dim, now brass, to come
+   pale. A dark song (a piano solo) turns the strip to night ink */
+.nui .nui-song {
+  --bg: #F3E9D2; --hi: #FFF9E8; --lo: #D8C9A6; --box: #F7F0DE; --box-past: #CFC3A6; --tone: var(--n-ink);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px; padding: 9px 15px 9px 12px;
+  font-family: var(--font-body); font-size: 13px; line-height: 18px; color: var(--tone);
+}
+.nui-song[hidden] { display: none; }
+.nui-corner > .nui-song { max-width: min(640px, 100%); }
+.nui .nui-song.is-dark { --bg: #2A2238; --hi: #3C3350; --lo: #1C1628; --box: #EFE6D2; --box-past: #5A5068; --tone: #F3E9D2; }
+.nui-song__icon { flex: none; display: grid; width: 16px; height: 16px; }
+.nui-song__icon svg { width: 16px; height: 16px; fill: var(--tone); shape-rendering: crispEdges; }
+.nui-song__title { font-size: 15px; line-height: 20px; font-weight: 700; white-space: nowrap; }
+.nui-song__style { opacity: 0.85; word-break: keep-all; }
+.nui-song__boxes { display: flex; gap: 3px; margin-left: 3px; }
+.nui-song__boxes i { width: 15px; height: 15px; background: var(--box); box-shadow: inset 0 0 0 2px var(--n-ink, #2A2622); }
+.nui-song__boxes i.is-past { background: var(--box-past); }
+.nui-song__boxes i.is-on { background: var(--brass, #C9A24A); }
+@media (max-width: 760px) {
+  .nui .nui-song { gap: 0 9px; padding: 6px 9px; font-size: 12px; line-height: 16px; }
+  .nui-song__title { font-size: 13px; line-height: 18px; }
+  .nui-song__boxes i { width: 12px; height: 12px; }
+}
+
 /* the corner folds to the date plate (docs/ui-onescreen-spec.md 5.4): goals, minimap and warnings
    wait behind the fold button, which keeps today's goal count in view */
 .nui .nui-fold { display: flex; align-items: center; gap: 6px; align-self: stretch; margin: 0; padding: 0 12px; border-left: 3px solid var(--n-ink); background: transparent; box-shadow: none; font-family: var(--font-body); font-size: var(--fs-label); color: var(--n-ink); cursor: pointer; min-width: 44px; }
@@ -639,7 +664,7 @@ body.field canvas, body.field .nui-tabs { touch-action: manipulation; }
 .nui .nui-fold__goal:empty { display: none; }
 .nui .nui-fold__goal { white-space: nowrap; }
 .nui-corner:not(.is-folded) .nui-fold__goal { display: none; }
-.nui-corner.is-folded > :not(.nui-corner__top):not(.nui-stat):not(.nui-stop) { display: none !important; }
+.nui-corner.is-folded > :not(.nui-corner__top):not(.nui-stat):not(.nui-stop):not(.nui-song) { display: none !important; }
 
 /* the date plate and, beside it, the goal count and the end-of-day button in one box
    (end-day button design: green = press now, brass = waiting for others, grey = something left) */

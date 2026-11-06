@@ -75,6 +75,41 @@ export const GIMMICK_RENDERERS = {
     else label(ctx, gm.label, x + T / 2, y + T + 9, { font: '11px system-ui, sans-serif' });
   },
 
+  // A dance (shared/dance.js gives the song and every dancer's cell, as the server judges them):
+  // the guests on their routes of this song, sliding a cell each beat, under the furniture fronts.
+  // A dark song (a piano solo) dims the floor a little. Dancers never block and are not talked to.
+  dance(ctx, gm, { T, S, now, reduce, fronts }) {
+    const Dn = window.Dance;
+    if (!Dn || !gm.active || gm.anchorAt == null) return;
+    const info = Dn.songAt(gm.songs, gm.anchorAt, now, gm.beatMs);
+    if (!info) return;
+    if (gm.songs[info.index].dark) {
+      ctx.fillStyle = 'rgba(26, 20, 44, 0.18)';
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+    const f = reduce ? 1 : Math.min(1, (((now - info.startAt) % gm.beatMs) / gm.beatMs) * 2);
+    const placed = gm.dancers.map((d) => ({ d, at: Dn.dancerAt(d, info, now, gm.beatMs) })).filter((x) => x.at).sort((a, b) => a.at.y - b.at.y);
+    for (const { d, at } of placed) {
+      const x = (at.prevX + (at.x - at.prevX) * f) * T;
+      const y = (at.prevY + (at.y - at.prevY) * f) * T;
+      const sp = d.sprite;
+      drawBehind(ctx, fronts, S, Math.round(y / T), [x - T, y - 2 * T - 4 * S, 3 * T, 3 * T + 8 * S], (c) => {
+        const img = sp ? loadImage(sp.url) : null;
+        let frame = null;
+        if (sp?.strip && img?.naturalWidth) {
+          // a dance sheet: its frames side by side, two to a beat
+          const n = Math.max(1, Math.floor(img.naturalWidth / sp.frameSize[0]));
+          const k = reduce ? 0 : Math.floor((now - info.startAt) / (gm.beatMs / 2)) % n;
+          frame = { x: k * sp.frameSize[0], y: 0 };
+        } else if (sp?.animations?.idle) frame = reduce ? sp.animations.idle.frames[0] : frameAt(sp.animations.idle, now);
+        const ok = frame && drawFrame(c, img, frame, sp.frameSize, sp.anchor, x + T / 2, y + T - 3 * S, S);
+        if (!ok) plainDancer(c, x, y, T, d.id);
+        return ok;
+      });
+      if (d.label) label(ctx, d.label, x + T / 2, y + T + 9, { font: '11px system-ui, sans-serif', bg: 'rgba(255,246,222,0.82)' });
+    }
+  },
+
   // A camera on the wall and what it sees now (pale red cells).
   camera(ctx, gm, { T, now, blocked, m, barks }) {
     const P = window.Patrol;
@@ -223,6 +258,20 @@ function plainGuard(ctx, x, y, T) {
   ctx.fillRect(x + T * 0.28, y + T * 0.06, T * 0.44, T * 0.12);
   ctx.fillStyle = '#f6d88a';
   ctx.fillRect(x + T * 0.44, y + T * 0.46, T * 0.12, T * 0.12);
+}
+
+// a plain dancer before (or without) a picture: a mask over a gown, the gown's colour from its id
+const GOWNS = ['#8a5c9a', '#3a6fd8', '#c84a40', '#2f6a5e', '#e2b04a', '#5e6470'];
+function plainDancer(ctx, x, y, T, id) {
+  const tone = GOWNS[[...id].reduce((n, ch) => n + ch.charCodeAt(0), 0) % GOWNS.length];
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fillRect(x + T * 0.2, y + T * 0.86, T * 0.6, T * 0.1);
+  ctx.fillStyle = tone;
+  ctx.fillRect(x + T * 0.22, y + T * 0.42, T * 0.56, T * 0.46);
+  ctx.fillStyle = '#efbc9c';
+  ctx.fillRect(x + T * 0.34, y + T * 0.14, T * 0.32, T * 0.28);
+  ctx.fillStyle = '#e8e4dc';
+  ctx.fillRect(x + T * 0.3, y + T * 0.2, T * 0.4, T * 0.1);
 }
 
 // Which patrol frame shows: walking the way it steps, sweeping the torch while it checks a noise,

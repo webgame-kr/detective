@@ -91,6 +91,47 @@
 .nui .pz-card.is-held { --bg: var(--brass); --hi: var(--brass-hi); --lo: var(--brass-lo); transform: translateY(-3px); }
 .nui .pz-card.is-solved { --bg: var(--good-soft); cursor: default; }
 
+/* ---------- logic (ui_logic): a ruled grid on cream, sand header, ink rules; blank cells grey,
+   the highlighted row (a spare mask) pink and bold; a blank cell opens the clue picker below ---------- */
+.nui .pz--logic { width: min(960px, 100%); }
+.pz-lg-wrap { overflow-x: auto; }
+.pz-lg { width: 100%; border-collapse: collapse; background: #FFF9E8; font-size: 14px; line-height: 20px; }
+.pz-lg th, .pz-lg td { border: 2px solid var(--n-ink); padding: 0; text-align: left; vertical-align: middle; }
+.pz-lg thead th { background: #E2CF9A; padding: 6px 10px; font-family: var(--font-label); font-weight: 700; white-space: nowrap; }
+.pz-lg tbody th { padding: 5px 10px; font-weight: 400; white-space: nowrap; }
+.pz-lg__given { display: block; padding: 5px 10px; }
+.pz-lg td.is-none { background: #F3EBD9; }
+.pz-lg tr.is-highlight > * { background: #F6E3D8; font-weight: 700; }
+.nui .pz-lg__cell {
+  display: block; width: 100%; min-height: 32px; padding: 5px 10px; margin: 0;
+  background: transparent; border: none; border-radius: 0; text-align: left; cursor: pointer;
+  font: inherit; color: var(--n-ink);
+}
+.nui .pz-lg__cell.is-blank { color: #9A8F7A; }
+.nui .pz-lg__cell:hover:not(:disabled) { background: rgba(201, 162, 74, 0.18); }
+.nui .pz-lg__cell:disabled { cursor: default; }
+.pz-lg td.is-open { background: var(--brass-hi); box-shadow: inset 0 0 0 3px var(--brass-lo); }
+.nui .pz-lg__cell:focus-visible { outline: 3px solid var(--brass); outline-offset: -3px; }
+.nui .pz-pick { display: flex; flex-direction: column; gap: 9px; padding: 12px 15px; --bg: #EFE6D2; --hi: #FFF9E8; --lo: #D8C9A6; }
+.pz-pick__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; font-size: 13px; line-height: 19px; }
+.pz-pick__head b { font-family: var(--font-label); font-size: 14px; }
+.pz-pick__head span { color: var(--n-ink-muted); }
+.pz-pick__list { display: flex; flex-wrap: wrap; gap: 9px; max-height: 180px; overflow-y: auto; padding: 3px; }
+.nui .pz-pick__clue {
+  --bg: #FFF9E8; --hi: #FFFFFF; --lo: #D8C9A6;
+  display: inline-flex; align-items: baseline; gap: 6px; min-height: 36px; padding: 6px 12px;
+  font-family: var(--font-body); font-size: 13px; line-height: 18px; text-align: left; cursor: pointer;
+}
+.pz-pick__clue small { font-family: var(--font-label); font-size: 11px; color: var(--n-ink-muted); }
+.nui .pz-pick__clue.is-current { --bg: var(--brass); --hi: var(--brass-hi); --lo: var(--brass-lo); }
+.pz-pick__empty { margin: 0; font-size: 13px; color: var(--n-ink-muted); }
+.pz-pick__foot { display: flex; justify-content: flex-end; gap: 9px; }
+@media (max-width: 760px), (max-height: 520px) {
+  .pz-lg { font-size: 12px; line-height: 16px; }
+  .pz-lg thead th, .pz-lg tbody th, .pz-lg__given, .nui .pz-lg__cell { padding: 4px 6px; }
+  .nui .pz-lg__cell { min-height: 28px; }
+}
+
 .pz-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px 15px; }
 .pz-foot__text { display: flex; flex-direction: column; gap: 3px; flex: 1 1 280px; min-width: 0; }
 .pz-status { margin: 0; min-height: 20px; font-size: 14px; line-height: 20px; }

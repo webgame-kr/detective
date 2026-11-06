@@ -345,7 +345,7 @@ class RoomManager {
     if (this.closing) return;
     for (const entry of this.rooms.values()) {
       const room = entry.room;
-      if (room.stage !== 'day' || !entry.caseDef || entry.broken || !entry.caseDef.index.watchers) continue;
+      if (room.stage !== 'day' || !entry.caseDef || entry.broken || !entry.caseDef.index.ticking) continue;
       if (!room.order.some((id) => this.isConnected(entry, id))) continue;
       const g = this.game(entry);
       g.runAutomation();
@@ -734,7 +734,7 @@ class RoomManager {
   }
 
   viewFor(entry, pid) {
-    return { ...buildView(entry, pid, (id) => this.isConnected(entry, id)), stateVersion: entry.version, stateEpoch: this.epoch };
+    return { ...buildView(entry, pid, (id) => this.isConnected(entry, id), this.clock), stateVersion: entry.version, stateEpoch: this.epoch };
   }
 
   // Long-poll: answers as soon as the room changes after `since`, or calls timeout after a while.
@@ -1194,6 +1194,8 @@ class Game {
         const p = actorId ? this.room.players[actorId] : null;
         return Boolean(p && ((p.escortedUntil ?? 0) > this.now() || (p.escortedDay === this.room.day && p.location === p.escortedTo)));
       },
+      // gimmick:dance: the number of the song a dance plays now (0: none)
+      song: (gimmickId) => this.songNumber(gimmickId),
       // a desk watched for the whole day (lingerForDay, or alone) counts as one person still at it
       seated: (objectId) => {
         const n = this.room.order.filter((id) => {
@@ -1205,6 +1207,12 @@ class Game {
         return Math.max(n, lingers ? 1 : 0);
       },
     };
+  }
+
+  songNumber(gimmickId) {
+    if (this.room.stage !== 'day') return 0;
+    const gm = this.ix.gimmicks.find((x) => x.id === gimmickId && x.type === 'dance');
+    return gm ? gimmicks.get('dance').songNow(this.gimmickApi(gm))?.number ?? 0 : 0;
   }
 
   check(cond, actorId = null) {
@@ -1288,9 +1296,10 @@ class Game {
   }
 
   // kind (optional): how the HUD shows it, e.g. 'stop_warn' / 'stop_missed' for a stop's broadcasts
-  notify(text, scene = null, kind = null) {
+  // to (optional): one player's id; only that player is ever sent the notice (view.js)
+  notify(text, scene = null, kind = null, to = null) {
     const r = this.room;
-    const notice = { id: ++r.noticeSeq, text, at: nowIso(), day: r.day, stage: r.stage, ...(scene ? { scene } : {}), ...(kind ? { kind } : {}) };
+    const notice = { id: ++r.noticeSeq, text, at: nowIso(), day: r.day, stage: r.stage, ...(scene ? { scene } : {}), ...(kind ? { kind } : {}), ...(to ? { to } : {}) };
     r.notices.push(notice);
     if (r.notices.length > MAX_NOTICES) r.notices.splice(0, r.notices.length - MAX_NOTICES);
     this.out.notices.push(notice);
@@ -1326,7 +1335,12 @@ class Game {
       state: this.room.world.gimmicks[gm.id],
       connectedAt: (l) => this.connectedAt(l),
       applyEffects: (list) => this.applyEffects(list, null, 1),
+      // effects and conditions with one player as the actor (who stands in a dance's slot)
+      applyEffectsAs: (list, pid) => this.applyEffects(list, pid, 1),
+      checkAs: (cond, pid) => this.check(cond, pid),
       notify: (text, kind = null) => this.notify(text, null, kind),
+      // a notice only that player is sent
+      notifyTo: (pid, text, kind = null) => this.notify(text, null, kind, pid),
       changed: () => this.changed(),
       check: (cond) => this.check(cond, null),
       solo: Boolean(this.room.settings?.solo),
@@ -1542,6 +1556,11 @@ const TYPES = {
     fields: { tile: f.tile(), is: f.scalar() },
     test: (c, s) => tilestate.valueAt(s.room, c.tile) === c.is,
   },
+  // gimmick:dance: the song a dance is playing now is number `is` (false while it is off, and at night)
+  song: {
+    fields: { gimmick: f.str(48), is: f.int(1, 8) },
+    test: (c, s) => s.song(c.gimmick) === c.is,
+  },
   event: {
     fields: { event: f.ref('event'), fired: f.bool(true) },
     test: (c, s) => Boolean(s.room.world.firedEvents[c.event]) === (c.fired !== false),
@@ -1567,6 +1586,11 @@ function validate(cond, path, ctx, errors) {
   }
   checkObject(cond, TYPES[cond.type].fields, path, { ...ctx, depth }, errors, { typed: true });
   if (cond.type === 'tile') tilestate.checkValue(cond.tile, cond.is, `${path}.is`, ctx, errors);
+  if (cond.type === 'song' && typeof cond.gimmick === 'string') {
+    const songs = ctx.danceSongs?.get(cond.gimmick);
+    if (!songs) errors.push(`${path}.gimmick: 춤(dance) 기믹 ID여야 해요 ('${cond.gimmick}')`);
+    else if (Number.isInteger(cond.is) && cond.is > songs) errors.push(`${path}.is: 이 춤에는 곡이 ${songs}개뿐이에요`);
+  }
   if (ctx.noActor && cond.scope === 'self') errors.push(`${path}.scope: 행동한 플레이어가 없는 곳(이벤트·기믹)에서는 'self'를 쓸 수 없어요`);
   if (ctx.noActor && cond.type === 'escorted') errors.push(`${path}: 행동한 플레이어가 없는 곳(이벤트·기믹·목표)에서는 escorted 조건을 쓸 수 없어요`);
   if (ctx.noActor && cond.type === 'team') errors.push(`${path}: 행동한 플레이어가 없는 곳(이벤트·기믹·목표)에서는 team 조건을 쓸 수 없어요`);
@@ -2563,7 +2587,7 @@ function isReachable(stage, day) {
 module.exports = { TOTAL_DAYS, STAGES, nextStage, stageLabel, isReachable, particle };
 
 }],
-"src/gimmicks/index.js": [{"./pressurePlates":"src/gimmicks/pressurePlates.js","./guardPatrol":"src/gimmicks/guardPatrol.js","./camera":"src/gimmicks/camera.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
+"src/gimmicks/index.js": [{"./pressurePlates":"src/gimmicks/pressurePlates.js","./guardPatrol":"src/gimmicks/guardPatrol.js","./camera":"src/gimmicks/camera.js","./dance":"src/gimmicks/dance.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
 'use strict';
 
 // Reviewed gimmick types. Case data can only reference a type listed here; it never ships code.
@@ -2578,7 +2602,10 @@ module.exports = { TOTAL_DAYS, STAGES, nextStage, stageLabel, isReachable, parti
 //   publicView(config, state, { check, solo, players })   what players in that location may see
 //   supportsSolo             true when the module has a rule for one player (required by meta.solo cases)
 //   watcher                  true for guards and cameras: the room is checked on a beat in the daytime
-const MODULES = [require('./pressurePlates'), require('./guardPatrol'), require('./camera')];
+//   ticks                    true for others that move with time alone (a dance): checked on the same beat,
+//                            and kept running when watchers are switched off (the audit's content check)
+//   resolveView?(view, { asset, sprite })   turns asset names / character ids of the public view into pictures
+const MODULES = [require('./pressurePlates'), require('./guardPatrol'), require('./camera'), require('./dance')];
 
 const REGISTRY = new Map(MODULES.map((m) => [m.type, m]));
 
@@ -3168,6 +3195,381 @@ module.exports = {
 };
 
 }],
+"src/gimmicks/dance.js": [{"../util":"src/util.js","../engine/spec":"src/engine/spec.js","../shared/dance":"src/shared/dance.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
+'use strict';
+const { isPlainObject } = require('../util');
+const { f, checkObject, checkValue } = require('../engine/spec');
+const D = require('../shared/dance');
+
+// A dance show in one place in the daytime: the guests dance a program of songs again and again,
+// each dancer on its own route per song. Where everyone is and which song plays follow from the
+// clock (shared/dance.js), so the server judges and the client draws from the same rule. Dancers
+// never see anyone, never block a step and are not talked to.
+//   - the song playing is a condition anywhere: { "type": "song", "gimmick": id, "is": 3 }
+//   - slots: standing still on a tile through `holdBeats` beats of a given song fires effects, once
+//     per player (the empty place in a circle dance: you dance it yourself)
+//   - songStart: effects the first time a song begins on a day (a scene the show reaches)
+// Alone, the beat is soloBeatMs (1.5× slower by default), so a slot is easier to reach in time.
+
+const COUNT = ['', '한', '두', '세', '네', '다섯', '여섯', '일곱', '여덟'];
+const ENTER_TEXT = '춤이 비워 둔 자리예요. 이 곡이 이어지는 동안 여기 서 있어 보세요.';
+const DONE_TEXT = '곡에 맞춰 한 바퀴를 함께 돌았어요.';
+const STRIP = { frameSize: [32, 36], anchor: [16, 33] }; // a dance sheet: frames side by side on the shared 32×36 grid
+
+const cfg = (config) => ({
+  beatMs: 500,
+  ...config,
+  soloBeatMs: config.soloBeatMs ?? Math.round((config.beatMs ?? 500) * 1.5),
+  slots: config.slots ?? [],
+  songStart: config.songStart ?? [],
+  dancers: config.dancers ?? [],
+  loopText: config.loopText ?? `무도회가 끝났어요. ${COUNT[config.songs.length]} 곡이 다시 처음부터 시작돼요.`,
+});
+const beatOf = (c, solo) => (solo ? c.soloBeatMs : c.beatMs);
+
+// whether a condition tree asks which song plays (a dance's own `when` may not: it would ask itself)
+const asksSong = (cond) => isPlainObject(cond) && (cond.type === 'song' || (cond.of ?? []).some(asksSong) || asksSong(cond.cond));
+
+// The song playing now (0: none), judged the same way for conditions, slots and songStart.
+function songNow(api) {
+  const s = api.state;
+  if (api.stage !== 'day' || s.anchorAt == null || s.anchorDay !== api.day) return null;
+  const c = cfg(api.config);
+  if (c.when && !api.check(c.when)) return null;
+  return D.songAt(c.songs, s.anchorAt, api.now(), beatOf(c, api.solo));
+}
+
+module.exports = {
+  type: 'dance',
+  feature: 'gimmick:dance',
+  clientRenderer: 'dance',
+  // alone the songs are slower (soloBeatMs); every slot is for one person
+  supportsSolo: true,
+  // not a watcher (it sees nobody), but it moves with time: the room is checked on a beat in the daytime
+  ticks: true,
+
+  authoring: {
+    summary: '낮 동안 한 장소에서 손님들이 곡 목록(songs)을 차례로 추고, 마지막 곡이 끝나면 처음부터 다시 춘다. 곡마다 춤추는 사람(dancers)이 자기 경로를 한 박자에 한 칸씩 돈다. 지금 몇 번째 곡인지는 시계로 정해지고(시작은 그날 그 기믹이 처음 켜진 때), 그 장소에 있는 사람에게 "♪ 곡 3 · 「달빛」" 띠와 곡 칸이 보인다. 춤추는 사람은 길을 막지 않고, 보지도 않고, 말을 걸 수도 없다. 조건 { "type": "song", "gimmick": 기믹 ID, "is": 곡 번호 }로 대상·선택지·변형을 그 곡 동안만 열 수 있다(기믹이 꺼져 있거나 밤이면 거짓). slots: 그 곡 동안 그 칸에 holdBeats박자 가만히 서 있으면 effects가 그 사람에게 한 번 실행된다(밟으면 enterText, 마치면 text가 그 사람에게만 뜬다). songStart: 그날 그 곡이 처음 시작될 때 effects를 한 번 실행한다(행동한 사람 없음). 혼자 하면 soloBeatMs(기본 beatMs의 1.5배)로 느려진다.',
+    config: {
+      location: '장소 ID',
+      when: '(선택) 춤이 열리는 조건(행동한 사람 없음, song 조건은 못 씀). 예: 2·4일 차만 { "type": "any", "of": [day eq 2, day eq 4] }',
+      beatMs: '(선택) 한 박자 길이(ms), 기본 500', soloBeatMs: '(선택) 혼자 할 때, 기본 beatMs × 1.5',
+      songs: '[{ "title": 20자, "style"?: 40자(띠에 함께 보이는 춤 이름·대형), "beats": 4~400, "dark"?: true(어두운 띠) }] 1~8곡. 곡 길이 = beats × beatMs',
+      dancers: '(선택) [{ "id", "character"?: 인물 ID, "sprite"?: assets 파일(32×36 칸이 가로로 이어진 춤 그림), "label"?: 20자(발밑 이름), "route"?: 기본 경로, "routes"?: { "3": 곡 3의 경로 }, "songs"?: [나와서 추는 곡 번호] }] 16명 이하. 경로는 [{ "x", "y", "wait"? }] 1~40칸(가로·세로·45도 직선으로 이어지고 끝에서 처음으로 돌아옴), 곡이 시작될 때 첫 칸에서 출발. sprite가 없으면 인물의 sprite. 가면 쓴 손님은 이름이 드러나지 않게 character 대신 sprite만 준다(페이지로 보내는 것은 그림 주소뿐)',
+      slots: '(선택) [{ "id", "x", "y", "song": 곡 번호, "holdBeats": 1~그 곡 박자 수, "when"?: 조건(행동한 사람 = 서 있는 사람), "enterText"?: 120자, "text"?: 200자, "effects": 실행 결과(행동한 사람 = 서 있는 사람) }] 8개 이하. 사람이 설 수 있는 바닥 칸. 곡이 바뀌거나 한 걸음이라도 움직이면 처음부터',
+      songStart: '(선택) [{ "song": 곡 번호, "effects": 실행 결과(행동한 사람 없음) }] 그날 그 곡이 처음 시작될 때 한 번',
+      loopText: '(선택) 마지막 곡이 끝나 처음으로 돌아갈 때 그 장소에 있는 사람에게 뜨는 말, 120자. 기본 "무도회가 끝났어요. 여섯 곡이 다시 처음부터 시작돼요."',
+    },
+    example: {
+      id: 'ball',
+      type: 'dance',
+      config: {
+        location: 'ballroom',
+        when: { type: 'any', of: [{ type: 'day', op: 'eq', value: 2 }, { type: 'day', op: 'eq', value: 4 }] },
+        beatMs: 500,
+        songs: [
+          { title: '청월', style: '왈츠', beats: 48 },
+          { title: '폴로네즈', style: '행진', beats: 40 },
+          { title: '달빛', style: '피아노 독주 · 원형 대형', beats: 64, dark: true },
+        ],
+        dancers: [
+          { id: 'fox', sprite: 'dance_fox.png', label: '은색 여우', route: [{ x: 4, y: 4 }, { x: 8, y: 4 }], routes: { 3: [{ x: 5, y: 3 }, { x: 9, y: 3 }, { x: 9, y: 7 }, { x: 5, y: 7 }] } },
+          { id: 'kim', character: 'kim', songs: [1, 3], route: [{ x: 4, y: 5 }, { x: 8, y: 5 }] },
+        ],
+        slots: [{ id: 'circle_gap', x: 7, y: 3, song: 3, holdBeats: 16, enterText: '원형 대형의 빈자리예요. 여기 서면 손님들과 함께 돌아요.', text: '한 바퀴를 돌았어요 · 기둥 뒤를 지나는 동안 객석이 보이지 않았어요', effects: [{ type: 'giveClue', clue: 'c_circle', to: 'actor' }] }],
+        songStart: [{ song: 3, effects: [{ type: 'fireEvent', event: 'ev_moonlight' }] }],
+        loopText: '재현 무도회가 끝났어요. 세 곡이 다시 처음부터 시작돼요.',
+      },
+    },
+  },
+
+  validateConfig(config, path, ctx, errors) {
+    const fields = {
+      location: f.ref('location'), when: f.condition(true), beatMs: f.int(200, 5000, true), soloBeatMs: f.int(200, 8000, true),
+      songs: f.any(), dancers: f.any(true), slots: f.any(true), songStart: f.any(true), loopText: f.str(120, true),
+    };
+    const noActor = { ...ctx, noActor: true };
+    if (!checkObject(config, fields, path, noActor, errors)) return;
+    if (config.when !== undefined && asksSong(config.when)) errors.push(`${path}.when: 춤이 열리는 조건에는 song 조건을 쓸 수 없어요`);
+    const { songs, location } = config;
+    if (!Array.isArray(songs) || songs.length < 1 || songs.length > 8) {
+      errors.push(`${path}.songs: 곡 1~8개의 배열이어야 해요`);
+      return;
+    }
+    songs.forEach((s, i) => checkObject(s, { title: f.str(20), style: f.str(40, true), beats: f.int(4, 400), dark: f.bool(true) }, `${path}.songs[${i}]`, ctx, errors));
+    const songNo = (v) => Number.isInteger(v) && v >= 1 && v <= songs.length;
+    const known = ctx.refs.location.has(location);
+    const ids = (list, p, label, max) => {
+      const seen = new Set();
+      if (list === undefined) return [];
+      if (!Array.isArray(list) || list.length > max) {
+        errors.push(`${p}: ${label} ${max}개 이하의 배열이어야 해요`);
+        return [];
+      }
+      list.forEach((x, i) => {
+        const id = x?.id;
+        if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,23}$/.test(id)) errors.push(`${p}[${i}].id: 영문 소문자·숫자·_·-로 된 24자 이하여야 해요`);
+        else if (seen.has(id)) errors.push(`${p}[${i}].id: '${id}'가 중복돼요`);
+        else seen.add(id);
+      });
+      return list;
+    };
+
+    const checkRoute = (route, p) => {
+      if (!Array.isArray(route) || !route.every((pt) => checkObject(pt, { x: f.int(0, 200), y: f.int(0, 200), wait: f.int(0, 64, true) }, `${p}`, ctx, errors))) {
+        if (!Array.isArray(route)) errors.push(`${p}: [{ "x", "y" }, ...] 배열이어야 해요`);
+        return;
+      }
+      const problem = D.routeProblem(route);
+      if (problem) errors.push(`${p}: ${problem}`);
+      else if (known) for (const c of D.routeCells(route)) if (!ctx.isFloor(location, c.x, c.y)) errors.push(`${p}: (${c.x},${c.y})는 바닥이 아니에요`);
+    };
+    ids(config.dancers, `${path}.dancers`, '춤추는 사람', 16).forEach((d, i) => {
+      const p = `${path}.dancers[${i}]`;
+      if (!checkObject(d, { id: f.any(), character: f.ref('character', true), sprite: f.str(80, true), label: f.str(20, true), route: f.any(true), routes: f.any(true), songs: f.any(true) }, p, ctx, errors)) return;
+      if (d.sprite !== undefined && ctx.assets && !ctx.assets.has(d.sprite)) errors.push(`${p}.sprite: assets에 없는 파일 '${d.sprite}'`);
+      if (d.sprite === undefined && d.character === undefined) errors.push(`${p}: sprite나 character 중 하나는 있어야 해요`);
+      if (d.songs !== undefined && (!Array.isArray(d.songs) || !d.songs.length || !d.songs.every(songNo))) errors.push(`${p}.songs: 1~${songs.length} 곡 번호의 배열이어야 해요`);
+      if (d.route !== undefined) checkRoute(d.route, `${p}.route`);
+      if (d.routes !== undefined) {
+        if (!isPlainObject(d.routes)) errors.push(`${p}.routes: { "곡 번호": 경로 } 객체여야 해요`);
+        else for (const [k, r] of Object.entries(d.routes)) {
+          if (!songNo(Number(k)) || String(Number(k)) !== k) errors.push(`${p}.routes.${k}: 1~${songs.length} 곡 번호여야 해요`);
+          else checkRoute(r, `${p}.routes.${k}`);
+        }
+      }
+      for (const n of Array.isArray(d.songs) && d.songs.every(songNo) ? d.songs : songs.map((_, k) => k + 1)) {
+        if (!d.route && !d.routes?.[String(n)]) errors.push(`${p}: 곡 ${n}의 경로가 없어요 (route나 routes["${n}"])`);
+      }
+    });
+
+    const tiles = new Set();
+    ids(config.slots, `${path}.slots`, '자리', 8).forEach((sl, i) => {
+      const p = `${path}.slots[${i}]`;
+      // the one standing there is the acting player
+      if (!checkObject(sl, { id: f.any(), x: f.int(0, 200), y: f.int(0, 200), song: f.int(1, 8), holdBeats: f.int(1, 400), when: f.condition(true), enterText: f.str(120, true), text: f.str(200, true), effects: f.effects() }, p, { ...ctx, noActor: false }, errors)) return;
+      if (!songNo(sl.song)) errors.push(`${p}.song: 1~${songs.length} 곡 번호여야 해요`);
+      else if (Number.isInteger(songs[sl.song - 1]?.beats) && sl.holdBeats > songs[sl.song - 1].beats) errors.push(`${p}.holdBeats: 곡 ${sl.song}의 박자 수(${songs[sl.song - 1].beats})보다 길 수 없어요`);
+      if (known && !ctx.isStandable(location, sl.x, sl.y)) errors.push(`${p}: 사람이 설 수 있는 바닥이 아니에요`);
+      const key = `${sl.x}:${sl.y}:${sl.song}`;
+      if (tiles.has(key)) errors.push(`${p}: 같은 곡에 같은 칸의 자리가 두 개 있어요`);
+      tiles.add(key);
+    });
+
+    if (config.songStart !== undefined) {
+      if (!Array.isArray(config.songStart) || config.songStart.length > 8) errors.push(`${path}.songStart: 8개 이하의 배열이어야 해요`);
+      else config.songStart.forEach((st, i) => {
+        if (checkObject(st, { song: f.int(1, 8), effects: f.effects() }, `${path}.songStart[${i}]`, noActor, errors) && !songNo(st.song)) errors.push(`${path}.songStart[${i}].song: 1~${songs.length} 곡 번호여야 해요`);
+      });
+    }
+  },
+
+  location: (config) => config.location,
+
+  initialState: () => ({ anchorAt: null, anchorDay: 0, holds: {}, done: {}, started: { day: 0, songs: [] } }),
+  restoreState: (saved, config) => {
+    const slotIds = new Set((config.slots ?? []).map((s) => s.id));
+    const done = {};
+    for (const [id, list] of Object.entries(isPlainObject(saved?.done) ? saved.done : {})) if (slotIds.has(id) && Array.isArray(list)) done[id] = list.filter((x) => typeof x === 'string');
+    return {
+      anchorAt: Number.isFinite(saved?.anchorAt) ? saved.anchorAt : null,
+      anchorDay: Number.isInteger(saved?.anchorDay) ? saved.anchorDay : 0,
+      // a hold in progress is not worth keeping over a restart: stand still again
+      holds: {},
+      done,
+      started: { day: Number.isInteger(saved?.started?.day) ? saved.started.day : 0, songs: Array.isArray(saved?.started?.songs) ? saved.started.songs.filter(Number.isInteger) : [] },
+    };
+  },
+
+  // The song playing for this gimmick at the api's clock: { number, round, beat, startAt, endAt, … } or null.
+  songNow,
+
+  update(api) {
+    if (api.stage !== 'day') return false;
+    const c = cfg(api.config);
+    const s = api.state;
+    let changed = false;
+    if (c.when && !api.check(c.when)) {
+      if (Object.keys(s.holds).length) s.holds = {};
+      return false;
+    }
+    const now = api.now();
+    const beatMs = beatOf(c, api.solo);
+    // a new day: the show starts from its first song now
+    if (s.anchorDay !== api.day || s.anchorAt == null) {
+      Object.assign(s, { anchorAt: now, anchorDay: api.day, holds: {}, started: { day: api.day, songs: [] } });
+      api.changed();
+      changed = true;
+    }
+    const info = D.songAt(c.songs, s.anchorAt, now, beatMs);
+    // a song reached for the first time today
+    if (s.started.day !== api.day) s.started = { day: api.day, songs: [] };
+    if (!s.started.songs.includes(info.number)) {
+      s.started.songs.push(info.number);
+      api.changed();
+      changed = true;
+      for (const st of c.songStart) if (st.song === info.number) api.applyEffects(st.effects);
+    }
+    // slots: whoever stands still on one through its beats
+    const here = api.peopleAt(c.location);
+    const present = new Set(here.map((p) => p.id));
+    for (const pid of Object.keys(s.holds)) if (!present.has(pid)) delete s.holds[pid];
+    for (const p of here) {
+      const slot = c.slots.find((sl) => sl.x === p.x && sl.y === p.y && sl.song === info.number && !(s.done[sl.id] ?? []).includes(p.id) && (!sl.when || api.checkAs(sl.when, p.id)));
+      const hold = s.holds[p.id];
+      if (!slot) {
+        if (hold) delete s.holds[p.id];
+        continue;
+      }
+      if (!hold || hold.slot !== slot.id || hold.round !== info.round) {
+        s.holds[p.id] = { slot: slot.id, round: info.round, since: now };
+        api.notifyTo(p.id, slot.enterText ?? ENTER_TEXT, 'dance_slot');
+        changed = true;
+        continue;
+      }
+      if (Math.floor((now - hold.since) / beatMs) < slot.holdBeats) continue;
+      delete s.holds[p.id];
+      s.done[slot.id] = [...(s.done[slot.id] ?? []), p.id];
+      api.changed();
+      api.notifyTo(p.id, slot.text ?? DONE_TEXT, 'dance_done');
+      api.applyEffectsAs(slot.effects, p.id);
+      changed = true;
+    }
+    return changed;
+  },
+
+  // Everyone in the place sees the dance anyway; the routes are what the client draws it from. Slots
+  // are not sent: they are found by standing on them. A dancer's character is never sent, only the
+  // picture it is drawn with (resolveView), so a masked guest is not named by the page.
+  publicView: (config, state, { check, solo, day, stage }) => {
+    const c = cfg(config);
+    const today = state.anchorDay === day && stage === 'day';
+    return {
+      songs: c.songs.map((s) => ({ title: s.title, style: s.style ?? null, beats: s.beats, dark: s.dark === true })),
+      beatMs: beatOf(c, solo),
+      anchorAt: today ? state.anchorAt : null,
+      active: stage === 'day' && (!c.when || check(c.when)),
+      loopText: c.loopText,
+      dancers: c.dancers.map((d) => ({ id: d.id, label: d.label ?? null, route: d.route ?? null, routes: d.routes ?? null, songs: d.songs ?? null, sprite: d.sprite ?? null, character: d.character ?? null })),
+    };
+  },
+
+  // view.js: pictures for the dancers (a dance sheet from the assets, else the character's own sprite)
+  resolveView(view, { asset, sprite }) {
+    view.dancers = view.dancers.map(({ character, sprite: sheet, ...d }) => ({
+      ...d,
+      sprite: sheet ? { url: asset(sheet), strip: true, ...STRIP } : sprite(character),
+    }));
+    return view;
+  },
+};
+
+}],
+"src/shared/dance.js": [{"./patrol":"src/shared/patrol.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
+'use strict';
+// A dance show (gimmick dance), shared by the server (which judges songs and slots) and the client
+// (which draws the dancers and the song banner). Like a guard's patrol, everything is a pure function
+// of time: the show began at anchorAt and plays its songs one after another, each `beats` beats long,
+// then starts again from the first. Nothing is stored per beat.
+//
+// Loaded by the server as a CommonJS module and by the page as a plain script (window.Dance), after
+// shared/patrol.js (routes are walked the way a guard walks a loop).
+(function (root) {
+  const P = typeof module !== 'undefined' && module.exports ? require('./patrol') : root.Patrol;
+
+  const showBeats = (songs) => songs.reduce((n, s) => n + s.beats, 0);
+
+  // The song playing at `now`: number (1-based), index, loop (how many times the show has ended),
+  // round (a counter over every song played since anchorAt: it tells two plays of a song apart),
+  // beat (beats into the song), beats, and when it began and ends (ms). null before the show starts.
+  function songAt(songs, anchorAt, now, beatMs) {
+    if (anchorAt == null || !Array.isArray(songs) || !songs.length) return null;
+    const total = showBeats(songs);
+    const beat = Math.max(0, Math.floor((now - anchorAt) / beatMs));
+    const loop = Math.floor(beat / total);
+    let rest = beat - loop * total;
+    for (let i = 0; i < songs.length; i++) {
+      if (rest < songs[i].beats) {
+        const startBeat = beat - rest;
+        return {
+          number: i + 1,
+          index: i,
+          loop,
+          round: loop * songs.length + i,
+          beat: rest,
+          beats: songs[i].beats,
+          startAt: anchorAt + startBeat * beatMs,
+          endAt: anchorAt + (startBeat + songs[i].beats) * beatMs,
+        };
+      }
+      rest -= songs[i].beats;
+    }
+    return null;
+  }
+
+  // When a given round (see songAt) begins.
+  function roundStart(songs, anchorAt, round, beatMs) {
+    const loop = Math.floor(round / songs.length);
+    const i = round % songs.length;
+    return anchorAt + (loop * showBeats(songs) + songs.slice(0, i).reduce((n, s) => n + s.beats, 0)) * beatMs;
+  }
+
+  // The first round at or after `now` in which song `number` plays (the one playing now counts).
+  function nextRound(songs, anchorAt, now, beatMs, number) {
+    const cur = songAt(songs, anchorAt, now, beatMs);
+    if (!cur) return null;
+    const ahead = (number - 1 - cur.index + songs.length) % songs.length;
+    return cur.round + ahead;
+  }
+
+  // The route a dancer follows in song `number` (routes["3"] for song 3, else route), and whether
+  // the dancer is on the floor in that song at all (songs omitted: every song).
+  const routeFor = (dancer, number) => dancer.routes?.[String(number)] ?? dancer.route ?? null;
+  const dancing = (dancer, number) => (!Array.isArray(dancer.songs) || dancer.songs.includes(number)) && Boolean(routeFor(dancer, number));
+
+  // A route is walked as a loop (back to its first point along a straight line), one cell a beat,
+  // from its first point when the song starts. A point may wait some beats (as a guard's does).
+  const wrappers = new WeakMap();
+  function ring(route) {
+    if (!wrappers.has(route)) wrappers.set(route, { route, loop: 'loop' });
+    return route.length === 1 ? [{ x: route[0].x, y: route[0].y, facing: 's' }] : P.slots(wrappers.get(route));
+  }
+
+  // A route a dancer can walk: 1 point (standing in place) or more, each on a straight line from the
+  // one before, and the last back to the first.
+  function routeProblem(route) {
+    if (!Array.isArray(route) || route.length < 1 || route.length > 40) return '경로는 1~40칸이어야 해요';
+    if (!route.every((p) => p && Number.isInteger(p.x) && Number.isInteger(p.y))) return '경로의 칸은 { "x", "y" } 정수여야 해요';
+    if (route.length === 1) return null;
+    const problem = P.routeProblem(route);
+    if (problem) return problem;
+    const first = route[0];
+    const last = route[route.length - 1];
+    const dx = Math.abs(first.x - last.x);
+    const dy = Math.abs(first.y - last.y);
+    return dx && dy && dx !== dy ? '마지막 칸에서 첫 칸으로 직선(가로·세로·45도)으로 돌아올 수 없어요' : null;
+  }
+
+  // Where a dancer stands at `now` in the song `info` (from songAt), and the cell it came from (for a
+  // slide between beats). null when the dancer is off the floor this song.
+  function dancerAt(dancer, info, now, beatMs) {
+    if (!info || !dancing(dancer, info.number)) return null;
+    const cells = ring(routeFor(dancer, info.number));
+    const k = Math.max(0, Math.floor((now - info.startAt) / beatMs));
+    const cur = cells[k % cells.length];
+    const prev = k > 0 ? cells[(k - 1) % cells.length] : cur;
+    return { x: cur.x, y: cur.y, facing: cur.facing, prevX: prev.x, prevY: prev.y };
+  }
+
+  // Every cell a route covers (validation: each must be floor).
+  const routeCells = (route) => (route.length === 1 ? [route[0]] : ring(route));
+
+  const api = { showBeats, songAt, roundStart, nextRound, routeFor, dancing, dancerAt, routeProblem, routeCells };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.Dance = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+}],
 "src/engine/playerstat.js": [{"../util":"src/util.js","./spec":"src/engine/spec.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
 'use strict';
 const { isPlainObject } = require('../util');
@@ -3435,15 +3837,26 @@ const { f, checkObject } = require('./spec');
 // and its `walls`, floor tiles that picture fills (boxes stacked on the floor), are walls while it is
 // the one shown. Each board lists its own walls, so a later board may clear them again (the boxes
 // leave). The grid is otherwise the same: a board can close floor, never open walls.
+// A board may give `days` instead of `from`: it is shown on those days only (a ball laid out on days
+// 2 and 4), and on the other days the place is as the `from` boards (or the plain picture) make it:
+//            "byDay": [{ "days": [2, 4], "image": "map_ballroom_ball.png", "walls": [[5, 6]] }]
 
 const FEATURE = 'dayart:v1';
 
 const entries = (loc) => (isPlainObject(loc?.art) && Array.isArray(loc.art.byDay) ? loc.art.byDay : []);
 
+// The board shown on `day` (its index, -1 for none): one listing that day (days), else the latest
+// `from` that has started.
+function boardIndex(list, day) {
+  const listed = list.findLastIndex((e) => Array.isArray(e.days) && e.days.includes(day));
+  return listed >= 0 ? listed : list.findLastIndex((e) => Number.isInteger(e.from) && day >= e.from);
+}
+
 // The picture of this place on `day`: { image, walls } (walls: the tiles it closes, as "x:y").
 function artOn(loc, day) {
   if (!loc?.art) return null;
-  const board = entries(loc).filter((e) => day >= e.from).at(-1);
+  const list = entries(loc);
+  const board = list[boardIndex(list, day)];
   return { image: board?.image ?? loc.art.image, walls: new Set((board?.walls ?? []).map(([x, y]) => `${x}:${y}`)) };
 }
 
@@ -3453,8 +3866,8 @@ const cache = new WeakMap();
 function locOn(loc, day) {
   const list = entries(loc);
   if (!list.length) return loc;
-  const n = list.filter((e) => day >= e.from).length;
-  if (!n || !list[n - 1].walls?.length) return loc;
+  const n = boardIndex(list, day);
+  if (n < 0 || !list[n].walls?.length) return loc;
   let per = cache.get(loc);
   if (!per) cache.set(loc, (per = new Map()));
   if (!per.has(n)) {
@@ -3494,11 +3907,20 @@ function validateArt(l, p, pkg, ctx, errors, assets) {
   for (const team of Array.isArray(pkg.teams) ? pkg.teams : []) if (team?.location === l.id) for (const s of Array.isArray(team.spawns) ? team.spawns : []) keep.add(`${s?.x}:${s?.y}`);
   for (const o of Array.isArray(pkg.objects) ? pkg.objects : []) if (isPlainObject(o) && o.location === l.id && (o.solid !== false || o.kind === 'talk')) keep.add(`${o.x}:${o.y}`);
   let last = 1;
+  const listed = new Set();
   list.forEach((e, i) => {
     const q = `${p}.byDay[${i}]`;
-    if (!checkObject(e, { from: f.int(2, 5), image: f.str(80), walls: f.any(true) }, q, ctx, errors)) return;
-    if (e.from <= last) errors.push(`${q}.from: 날짜는 2일 차부터 앞의 그림보다 늦게 적어야 해요`);
-    last = Math.max(last, e.from);
+    if (!checkObject(e, { from: f.int(2, 5, true), days: f.any(true), image: f.str(80), walls: f.any(true) }, q, ctx, errors)) return;
+    if ((e.from === undefined) === (e.days === undefined)) errors.push(`${q}: from(그날부터)과 days(그날들만) 중 하나만 적어야 해요`);
+    else if (e.from !== undefined) {
+      if (e.from <= last) errors.push(`${q}.from: 날짜는 2일 차부터 앞의 그림보다 늦게 적어야 해요`);
+      last = Math.max(last, e.from);
+    } else if (!Array.isArray(e.days) || e.days.length < 1 || e.days.length > 5 || !e.days.every((d) => Number.isInteger(d) && d >= 1 && d <= 5) || new Set(e.days).size !== e.days.length) {
+      errors.push(`${q}.days: 서로 다른 1~5일 차 번호 1~5개의 배열이어야 해요`);
+    } else {
+      for (const d of e.days) if (listed.has(d)) errors.push(`${q}.days: ${d}일 차는 다른 그림의 days에도 있어요`);
+      e.days.forEach((d) => listed.add(d));
+    }
     if (!assets.has(e.image)) errors.push(`${q}.image: assets에 없는 파일 '${e.image}'`);
     if (e.walls === undefined) return;
     if (!Array.isArray(e.walls) || e.walls.length > 60) {
@@ -4502,6 +4924,13 @@ function restore(room, caseDef) {
 
 const holds = (g, p, clueId) => Boolean(p.notebook.clues[clueId] || g.room.board.clues[clueId]);
 
+// What a type may ask about the player at the board (logic: which clues they can lay on a cell, and
+// the names of the clues already laid that this player may see).
+const helpers = (g, p) => ({
+  holds: (clueId) => holds(g, p, clueId),
+  clueName: (clueId) => g.ix.clues.get(clueId)?.name ?? null,
+});
+
 // The records still missing for this player, by name only (the names the case gives them). An entry
 // that is a list is met by any one of its clues, and is named as "A 또는 B".
 const missing = (g, p, obj) => (obj.puzzle.needs ?? [])
@@ -4521,7 +4950,7 @@ function view(g, p, obj) {
     label: obj.label,
     title: pz.title ?? obj.label,
     intro: pz.intro ?? null,
-    board: mod.view(pz.data, st.progress),
+    board: mod.view(pz.data, st.progress, helpers(g, p)),
     solved: st.solved,
     solvedBy: st.solvedBy ? g.room.players[st.solvedBy]?.nickname ?? null : null,
     // what solving gave, once solved (the card names, never before)
@@ -4592,7 +5021,7 @@ function act(g, pid, body, requireTarget) {
     return { solved: true, text: pz.onSolve.text ?? null, puzzle: view(g, p, obj) };
   }
   if (st.solved) throw new AppError(409, 'solved', '이미 다 맞춘 판이에요.');
-  st.progress = mod.apply(st.progress, pz.data, body);
+  st.progress = mod.apply(st.progress, pz.data, body, helpers(g, p));
   g.changed();
   return { puzzle: view(g, p, obj) };
 }
@@ -4600,7 +5029,7 @@ function act(g, pid, body, requireTarget) {
 module.exports = { open, act, view, restore, stateOf };
 
 }],
-"src/puzzles/index.js": [{"../util":"src/util.js","../engine/spec":"src/engine/spec.js","./sort":"src/puzzles/sort.js","./shunt":"src/puzzles/shunt.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
+"src/puzzles/index.js": [{"../util":"src/util.js","../engine/spec":"src/engine/spec.js","./sort":"src/puzzles/sort.js","./shunt":"src/puzzles/shunt.js","./logic":"src/puzzles/logic.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
 'use strict';
 const { isPlainObject } = require('../util');
 const { f, checkObject, checkValue } = require('../engine/spec');
@@ -4612,14 +5041,15 @@ const { f, checkObject, checkValue } = require('../engine/spec');
 //   authoring                        shown to case authors (scripts/gpt-prompt.js)
 //   validate(data, answer, path, ctx, errors)
 //   initial(data) / restore(saved, data)   the room's progress, saved in room.world.puzzles[id]
-//   apply(progress, data, op) → progress  one move by a player; throws AppError on a bad move
-//   view(data, progress)             what players see of the board (never the answer)
+//   apply(progress, data, op, { holds, clueName }) → progress  one move by a player; throws AppError on
+//                                    a bad move. holds(clueId): the player has it (notebook or board)
+//   view(data, progress, { holds, clueName })  what players see of the board (never the answer)
 //   judge(data, answer, progress) → { complete, ok, message?, next? }  next: one step of the answer
 //                                    is right (a time on a worksheet); the board goes on from there
 //   wrongText?                       what a wrong submission says for this type
 //   solved(data, answer) → progress  the board as it stays once solved
 //   solution(data, answer) → [op]    moves that lay out the answer (for the audit)
-const MODULES = [require('./sort'), require('./shunt')];
+const MODULES = [require('./sort'), require('./shunt'), require('./logic')];
 const REGISTRY = new Map(MODULES.map((m) => [m.type, m]));
 const FEATURE = 'puzzle:v1';
 
@@ -5117,6 +5547,209 @@ module.exports = {
 };
 
 }],
+"src/puzzles/logic.js": [{"../util":"src/util.js","../engine/spec":"src/engine/spec.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
+'use strict';
+const { AppError, isPlainObject, own } = require('../util');
+const { f, checkObject, checkValue } = require('../engine/spec');
+
+// A logic grid: rows (masks, guests) × columns (owner, glove size, shoes…). Some cells are printed
+// (given); the rest start blank and are filled by laying one of the team's clues on them: a clue the
+// cell lists shows the value that clue gives (which may be a misleading one), any other clue does not
+// fit (no cost). The cells the answer names must all hold the right value.
+//   data    { corner?, columns: [{ id, label }], rows: [{ id, label, highlight?, cells: { <col id>:
+//             { given: "값" } | { from: [{ clue, value }], placeholder? } } }] }
+//   answer  { "<row id>:<col id>": "값", ... }  only blank (from) cells; every value one its clues give
+//   progress { cells: { "<row id>:<col id>": <clue id> } }  the clue laid on each filled cell
+// What players see of a blank cell is its placeholder until a clue is laid on it, then that clue's
+// value: the values of clues nobody laid, and the answer, never leave the server.
+
+const ID_RE = /^[a-z0-9][a-z0-9_-]{0,23}$/;
+const isId = (v) => typeof v === 'string' && ID_RE.test(v) && !(v in Object.prototype);
+const key = (row, col) => `${row}:${col}`;
+
+// every blank cell of the board: "row:col" → its `from` list
+function blanks(data) {
+  const out = new Map();
+  for (const r of data.rows) for (const [col, cell] of Object.entries(r.cells)) if (cell.from) out.set(key(r.id, col), cell.from);
+  return out;
+}
+
+module.exports = {
+  type: 'logic',
+  feature: 'puzzle:v1',
+  wrongText: '표와 맞지 않는 칸이 있어요. 칸에 고른 단서를 다시 살펴보세요.',
+
+  // Shown to case authors (scripts/gpt-prompt.js).
+  authoring: {
+    summary: '행(가면·손님) × 열(주인·장갑·구두·향) 격자 논리표. 칸은 처음부터 적힌 칸(given)과 빈칸(from)이 있다. 빈칸을 누르면 팀이 가진 단서(내 수첩이나 공동 보드) 중 하나를 골라 그 칸의 근거로 놓는다. 그 칸의 from에 있는 단서면 그 단서가 말하는 값이 칸에 적히고(일부러 틀린 값을 주는 단서를 섞어도 된다), 없는 단서면 "그 단서로는 이 칸을 채울 수 없어요"라고만 하고 대가는 없다. 칸은 비우고 다시 채울 수 있고, 진행은 방 전체가 함께 쓴다. 제출하면 answer에 적힌 칸이 모두 채워졌고 값이 맞는지 서버가 본다. 정답 값과 아무도 고르지 않은 단서의 값은 플레이어에게 보내지 않는다.',
+    data: {
+      corner: '(선택) 행 이름 열의 머리글, 12자 (예: "가면")',
+      columns: '[{ "id": 영문 소문자 24자, "label": 12자 }] 1~6개',
+      rows: '[{ "id": 영문 소문자 24자, "label": 20자, "highlight"?: true(강조 줄), "cells": { "열 id": 칸 } }] 1~16줄. 칸은 { "given": "값" }(처음부터 적힘) 또는 { "from": [{ "clue": 단서 ID, "value": "값" }] 1~8개, "placeholder"?: 12자(비었을 때 회색 글씨, 기본 "?") }. 값은 20자. 칸을 비워 둔 열은 빈칸으로 보인다',
+    },
+    answer: '{ "행 id:열 id": "값", ... } 1~60칸. from 칸만, 값은 그 칸의 from 중 하나가 주는 값',
+    example: {
+      id: 'mask_grid',
+      location: 'wardrobe',
+      x: 6,
+      y: 3,
+      label: '작업대',
+      kind: 'puzzle',
+      solid: false,
+      puzzle: {
+        type: 'logic',
+        title: '가면 논리표',
+        intro: '모은 증언과 대장으로 칸을 채워, 열두 가면의 주인을 맞춰요.',
+        data: {
+          corner: '가면',
+          columns: [{ id: 'owner', label: '주인' }, { id: 'glove', label: '장갑' }],
+          rows: [
+            { id: 'fox', label: '은색 여우', cells: { owner: { given: '하은솔' }, glove: { given: 'S' } } },
+            { id: 'spare', label: '예비 은색 여우', highlight: true, cells: { owner: { from: [{ clue: 'c_hand', value: '마태윤' }, { clue: 'c_rumor', value: '류해진' }] }, glove: { from: [{ clue: 'c_glove_log', value: 'L' }] } } },
+          ],
+        },
+        answer: { 'spare:owner': '마태윤', 'spare:glove': 'L' },
+        onSolve: { give: ['d_spare_fox'], text: '예비 은색 여우를 쓴 사람은 손이 큰 사람이에요.' },
+        attempts: null,
+      },
+    },
+  },
+
+  validate(data, answer, path, ctx, errors) {
+    if (!checkObject(data, { corner: f.str(12, true), columns: f.any(), rows: f.any() }, `${path}.data`, ctx, errors)) return;
+    const cols = new Set();
+    if (!Array.isArray(data.columns) || data.columns.length < 1 || data.columns.length > 6) errors.push(`${path}.data.columns: 열 1~6개의 배열이어야 해요`);
+    else data.columns.forEach((c, i) => {
+      const p = `${path}.data.columns[${i}]`;
+      if (!checkObject(c, { id: f.any(), label: f.str(12) }, p, ctx, errors)) return;
+      if (!isId(c.id)) errors.push(`${p}.id: 영문 소문자·숫자·_·-로 된 24자 이하여야 해요`);
+      else if (cols.has(c.id)) errors.push(`${p}.id: '${c.id}'가 중복돼요`);
+      else cols.add(c.id);
+    });
+    const cells = new Map(); // "row:col" → cell
+    const rows = new Set();
+    if (!Array.isArray(data.rows) || data.rows.length < 1 || data.rows.length > 16) errors.push(`${path}.data.rows: 줄 1~16개의 배열이어야 해요`);
+    else data.rows.forEach((r, i) => {
+      const p = `${path}.data.rows[${i}]`;
+      if (!checkObject(r, { id: f.any(), label: f.str(20), highlight: f.bool(true), cells: f.any() }, p, ctx, errors)) return;
+      if (!isId(r.id)) errors.push(`${p}.id: 영문 소문자·숫자·_·-로 된 24자 이하여야 해요`);
+      else if (rows.has(r.id)) errors.push(`${p}.id: '${r.id}'가 중복돼요`);
+      else rows.add(r.id);
+      if (!isPlainObject(r.cells)) {
+        errors.push(`${p}.cells: { "열 id": 칸 } 객체여야 해요`);
+        return;
+      }
+      for (const [col, cell] of Object.entries(r.cells)) {
+        const cp = `${p}.cells.${col}`;
+        if (!cols.has(col)) errors.push(`${cp}: 없는 열이에요`);
+        if (!isPlainObject(cell) || (cell.given === undefined) === (cell.from === undefined)) {
+          errors.push(`${cp}: { "given": "값" } 또는 { "from": [...] } 중 하나여야 해요`);
+          continue;
+        }
+        if (!checkObject(cell, { given: f.str(20, true), from: f.any(true), placeholder: f.str(12, true) }, cp, ctx, errors)) continue;
+        if (cell.given !== undefined && cell.placeholder !== undefined) errors.push(`${cp}.placeholder: 빈칸(from)에만 쓸 수 있어요`);
+        if (cell.from !== undefined) {
+          if (!Array.isArray(cell.from) || cell.from.length < 1 || cell.from.length > 8) {
+            errors.push(`${cp}.from: { "clue", "value" } 1~8개의 배열이어야 해요`);
+            continue;
+          }
+          const seen = new Set();
+          cell.from.forEach((e, k) => {
+            if (!checkObject(e, { clue: f.any(), value: f.str(20) }, `${cp}.from[${k}]`, ctx, errors)) return;
+            checkValue(e.clue, f.ref('clue'), `${cp}.from[${k}].clue`, ctx, errors);
+            if (seen.has(e.clue)) errors.push(`${cp}.from[${k}].clue: 같은 칸에 같은 단서가 두 번 있어요`);
+            seen.add(e.clue);
+          });
+        }
+        if (isId(r.id)) cells.set(key(r.id, col), cell);
+      }
+    });
+    if (!isPlainObject(answer) || !Object.keys(answer).length || Object.keys(answer).length > 60) {
+      errors.push(`${path}.answer: { "행 id:열 id": "값" } 1~60칸의 객체여야 해요`);
+      return;
+    }
+    for (const [k, value] of Object.entries(answer)) {
+      const cell = cells.get(k);
+      if (!cell) errors.push(`${path}.answer.${k}: 없는 칸이에요 ("행 id:열 id")`);
+      else if (!cell.from) errors.push(`${path}.answer.${k}: 처음부터 적힌 칸(given)은 정답 칸이 될 수 없어요`);
+      else if (Array.isArray(cell.from) && !cell.from.some((e) => e?.value === value)) errors.push(`${path}.answer.${k}: 이 칸의 단서 중 '${String(value)}'를 주는 것이 없어요`);
+    }
+  },
+
+  initial: () => ({ cells: {} }),
+  // only real blank cells holding one of their own clues survive an older save
+  restore(saved, data) {
+    const out = {};
+    for (const [k, from] of blanks(data)) {
+      const clue = own(saved?.cells, k);
+      if (from.some((e) => e.clue === clue)) out[k] = clue;
+    }
+    return { cells: out };
+  },
+
+  // fill: { row, col, clue } lays a clue the player holds on a blank cell; clear: { row, col }; reset: all blank
+  apply(progress, data, op, { holds } = {}) {
+    if (op.op === 'reset') return { cells: {} };
+    if (op.op !== 'fill' && op.op !== 'clear') throw new AppError(400, 'bad_input', '할 수 없는 조작이에요.');
+    const from = typeof op.row === 'string' && typeof op.col === 'string' ? blanks(data).get(key(op.row, op.col)) : null;
+    if (!from) throw new AppError(400, 'bad_input', '채울 수 있는 칸이 아니에요.');
+    const cells = { ...progress.cells };
+    if (op.op === 'clear') {
+      delete cells[key(op.row, op.col)];
+      return { cells };
+    }
+    if (typeof op.clue !== 'string' || !holds?.(op.clue)) throw new AppError(409, 'no_clue', '아직 가지고 있지 않은 단서예요.');
+    if (!from.some((e) => e.clue === op.clue)) throw new AppError(409, 'cell_mismatch', '그 단서로는 이 칸을 채울 수 없어요.');
+    cells[key(op.row, op.col)] = op.clue;
+    return { cells };
+  },
+
+  // what players see: the printed cells, and for blank ones the placeholder or the value of the clue
+  // laid there (named only to a player who holds that clue too); never the answer or other clues' values
+  view(data, progress, { holds, clueName } = {}) {
+    let open = 0;
+    let filled = 0;
+    const rows = data.rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      highlight: r.highlight === true,
+      cells: Object.fromEntries(Object.entries(r.cells).map(([col, cell]) => {
+        if (cell.given !== undefined) return [col, { kind: 'given', value: cell.given }];
+        open += 1;
+        const clue = progress.cells[key(r.id, col)];
+        const entry = clue ? cell.from.find((e) => e.clue === clue) : null;
+        if (!entry) return [col, { kind: 'blank', value: null, placeholder: cell.placeholder ?? '?', clue: null }];
+        filled += 1;
+        return [col, { kind: 'filled', value: entry.value, placeholder: cell.placeholder ?? '?', clue: holds?.(clue) ? { id: clue, name: clueName?.(clue) } : null }];
+      })),
+    }));
+    return { corner: data.corner ?? '', columns: data.columns.map((c) => ({ id: c.id, label: c.label })), rows, open, filled };
+  },
+
+  judge(data, answer, progress) {
+    const empty = Object.keys(answer).filter((k) => !progress.cells[k]).length;
+    if (empty) return { complete: false, ok: false, message: '아직 비어 있는 칸이 있어요. 단서로 칸을 더 채워 보세요.' };
+    const valueAt = (k) => blanks(data).get(k).find((e) => e.clue === progress.cells[k])?.value;
+    return { complete: true, ok: Object.entries(answer).every(([k, v]) => valueAt(k) === v) };
+  },
+
+  // once solved, the answer cells stay filled with a clue that gives the right value
+  solved(data, answer) {
+    const from = blanks(data);
+    return { cells: Object.fromEntries(Object.entries(answer).map(([k, v]) => [k, from.get(k).find((e) => e.value === v).clue])) };
+  },
+  // the moves that fill the answer (the audit's player who knows the case): every clue that gives the
+  // right value, in turn, so whichever of them the player holds is laid (the others are refused)
+  solution(data, answer) {
+    const from = blanks(data);
+    return Object.entries(answer).flatMap(([k, v]) => {
+      const [row, col] = k.split(':');
+      return from.get(k).filter((e) => e.value === v).map((e) => ({ op: 'fill', row, col, clue: e.clue }));
+    });
+  },
+};
+
+}],
 "src/engine/world.js": [{"../gimmicks":"src/gimmicks/index.js","./puzzles":"src/engine/puzzles.js","./stops":"src/engine/stops.js","./tilestate":"src/engine/tilestate.js","./playerstat":"src/engine/playerstat.js"}, function (module, exports, require, Buffer, setInterval, setTimeout, clearInterval, clearTimeout) {
 'use strict';
 const gimmicks = require('../gimmicks');
@@ -5287,9 +5920,10 @@ function gimmickView(g, gm) {
   const { room } = g;
   const mod = gimmicks.get(gm.type);
   const config = room.world.gimmickPatches?.[gm.id] ? { ...gm.config, ...room.world.gimmickPatches[gm.id] } : gm.config;
-  const view = mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length });
+  const view = mod.publicView(config, room.world.gimmicks[gm.id], { check: (c) => g.check(c, null), solo: Boolean(room.settings?.solo), players: room.order.length, day: room.day, stage: room.stage });
   // a guard drawn as its character walking the route, when the case gives that person a patrol sheet
-  if (view.character) view.sprite = spriteView(g.caseDef, view.character, 'patrolSprite');
+  if (view.character && gm.type === 'guard_patrol') view.sprite = spriteView(g.caseDef, view.character, 'patrolSprite');
+  mod.resolveView?.(view, { asset: (name) => assetUrl(g.caseDef, name), sprite: (characterId) => spriteView(g.caseDef, characterId) });
   return { id: gm.id, type: gm.type, renderer: mod.clientRenderer, location: mod.location(gm.config), ...view };
 }
 
@@ -5472,7 +6106,8 @@ function finalView(g) {
   return view;
 }
 
-function buildView(entry, pid, isConnected) {
+// now: the game's clock (songs and patrols are judged by it): the real one unless a test moves it
+function buildView(entry, pid, isConnected, gameClock = () => Date.now()) {
   const { room, caseDef } = entry;
   const me = room.players[pid];
   const started = room.stage !== 'lobby' && caseDef && !entry.broken;
@@ -5517,11 +6152,12 @@ function buildView(entry, pid, isConnected) {
       // what only my team was told; nobody else's briefing is ever sent
       briefings: started ? (caseDef.pkg.teams ?? []).filter((t) => me.team === '*' || me.team === t.id).filter((t) => t.briefing).map((t) => ({ team: t.id, name: t.name, text: t.briefing })) : [],
     },
-    notices: room.notices.slice(-20),
+    // a notice meant for one player (a dance slot's line) reaches only that player
+    notices: room.notices.filter((n) => !n.to || n.to === pid).slice(-20),
     chat: (room.chat ?? []).slice(-60),
   };
   if (!started) return view;
-  const g = new Game(entry, { actorId: pid, isConnected });
+  const g = new Game(entry, { actorId: pid, isConnected, now: gameClock });
   view.me.position = { location: me.location, x: me.x, y: me.y };
   view.map = mapView(g, me);
   view.dialogue = dialogueView(g, me);
@@ -5844,6 +6480,8 @@ function buildContext(pkg, errors) {
     refs,
     noActor: false,
     gimmickIds: new Set((Array.isArray(pkg.gimmicks) ? pkg.gimmicks : []).map((gm) => gm?.id)),
+    // gimmick:dance: dance id → how many songs it has (the song condition)
+    danceSongs: new Map((Array.isArray(pkg.gimmicks) ? pkg.gimmicks : []).filter((gm) => gm?.type === 'dance' && Array.isArray(gm.config?.songs)).map((gm) => [gm.id, gm.config.songs.length])),
     isFloor,
     inBounds,
     // floor that is not an exit trigger and not blocked by an object
@@ -5919,6 +6557,7 @@ function validateCase(pkg) {
       else assets.add(a);
     });
   }
+  ctx.assets = assets;
 
   // meta
   if (checkObject(pkg.meta, META_FIELDS, 'meta', ctx, errors)) {
@@ -6351,6 +6990,8 @@ function compileCase(pkg) {
       deductions: frozen.deductions ?? [],
       // guards or cameras: the room is checked on a beat in the daytime
       watchers: (frozen.gimmicks ?? []).some((gm) => gimmicks.get(gm.type)?.watcher),
+      // those and anything else that moves with time alone (a dance)
+      ticking: (frozen.gimmicks ?? []).some((gm) => gimmicks.get(gm.type)?.watcher || gimmicks.get(gm.type)?.ticks),
       questions: frozen.final.questions,
     },
   };

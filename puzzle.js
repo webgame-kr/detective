@@ -4,7 +4,8 @@
 // Works with the mouse (click, or drag a card onto a slot), touch (tap a card, tap a slot) and the
 // keyboard alone (arrows choose, Enter picks up and puts down, Esc lets go or closes).
 // Types: sort (cards into slots) and shunt (a track board: choose a car, slide it one cell at a time
-// with the arrows or a tap on a lit cell; the times on the worksheet are confirmed one by one).
+// with the arrows or a tap on a lit cell; the times on the worksheet are confirmed one by one), and
+// logic (a grid: tap a blank cell, pick one of the team's clues to lay on it; ui_logic).
 import { h } from './net.js';
 
 // 을/를 after a card name: by the last syllable's final consonant, digits read aloud (E-3 → 삼 → 을)
@@ -19,6 +20,7 @@ const withObj = (word) => `${word}${OBJ(word)}`;
 
 const KEY_HELP = '끌어서 놓기 · 키보드: 방향키로 상자 고르기, Enter로 집기·놓기, Esc로 내려놓기';
 const SHUNT_HELP = '방향키로 블록 고르기 · Enter로 잡기 · 잡은 뒤 방향키로 밀기 · 분기점에서만 선로를 바꿀 수 있어요';
+const LOGIC_HELP = '칸을 누르면 근거로 쓸 단서를 고를 수 있어요 · 회색 글씨는 아직 근거가 없는 칸';
 // the paint of the cars (ui_shunt): the fixed train navy, slate, wine, brown; the cars that move green, blue, grey
 const FIXED_CARS = ['#2A2D40', '#5E6470', '#7A3F44', '#8A5C48'];
 const FREE_CARS = ['#2F6A5E', '#3A6FD8', '#8A8F9A', '#7A5A9A'];
@@ -59,10 +61,11 @@ function yard(board) {
 }
 
 export class PuzzleWindow {
-  constructor({ send, onGained, onOpenChange }) {
-    Object.assign(this, { send, onGained, onOpenChange });
+  // clues(): the clues this player can lay on a logic cell (own notebook and the shared board)
+  constructor({ send, onGained, onOpenChange, clues = () => [] }) {
+    Object.assign(this, { send, onGained, onOpenChange, clues });
     this.view = null;
-    this.held = null; // card id picked up
+    this.held = null; // card id picked up; on a logic grid, the cell being filled ("row:col")
     this.status = '';
     this.closing = null; // object id being closed, until the server agrees
     this.busy = false;
@@ -91,7 +94,7 @@ export class PuzzleWindow {
       this.root.hidden = false;
       this.onOpenChange?.(true);
     }
-    const pieces = view.type === 'shunt' ? view.board.blocks.filter((b) => !b.fixed) : view.board.cards;
+    const pieces = view.type === 'shunt' ? view.board.blocks.filter((b) => !b.fixed) : view.type === 'logic' ? this.logicCells(view) : view.board.cards;
     if (this.held && (view.solved || !pieces.some((c) => c.id === this.held))) this.held = null;
     this.draw(fresh ? 'first' : null);
   }
@@ -190,7 +193,8 @@ export class PuzzleWindow {
     const el = document.activeElement;
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (this.held && this.view.type === 'shunt') this.grab(this.held);
+      if (this.held && this.view.type === 'logic') this.pickCell(this.held);
+      else if (this.held && this.view.type === 'shunt') this.grab(this.held);
       else if (this.held) this.pick(this.held);
       else this.close();
       return;
@@ -204,6 +208,11 @@ export class PuzzleWindow {
       this.shuntKey(e.key.slice(5).toLowerCase(), el);
       return;
     }
+    if (this.view.type === 'logic' && e.key.startsWith('Arrow')) {
+      e.preventDefault();
+      this.logicKey(e.key.slice(5).toLowerCase(), el);
+      return;
+    }
     const dir = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
     if (dir) {
       e.preventDefault();
@@ -215,6 +224,164 @@ export class PuzzleWindow {
       next.focus();
     }
     // Enter and Space press the focused button as buttons always do
+  }
+
+  // ---------- logic: a grid filled with the team's clues (ui_logic) ----------
+  // every cell a clue can be laid on, as { id: "row:col", row, col, r, c } (r, c: its place in the grid)
+  logicCells(v = this.view) {
+    const b = v.board;
+    const out = [];
+    b.rows.forEach((row, r) => b.columns.forEach((col, c) => {
+      const cell = row.cells[col.id];
+      if (cell && cell.kind !== 'given') out.push({ id: `${row.id}:${col.id}`, row, col, cell, r, c });
+    }));
+    return out;
+  }
+
+  cellLabel(id) {
+    const x = this.logicCells().find((k) => k.id === id);
+    return x ? `${x.row.label} · ${x.col.label}` : '';
+  }
+
+  // open (or close) the clue picker of a cell
+  pickCell(id) {
+    if (this.view.solved) return;
+    if (this.held === id) {
+      this.held = null;
+      this.status = '';
+      this.draw(`cell:${id}`);
+      return;
+    }
+    this.held = id;
+    this.status = `‘${this.cellLabel(id)}’ 칸에 근거로 놓을 단서를 골라 주세요.`;
+    this.draw('pick');
+  }
+
+  async layClue(clueId) {
+    const id = this.held;
+    if (!id || this.view.solved) return;
+    const [row, col] = id.split(':');
+    const res = await this.move({ op: 'fill', row, col, clue: clueId });
+    if (res?.status === 200) {
+      this.held = null;
+      const cell = res.body.puzzle.board.rows.find((x) => x.id === row)?.cells[col];
+      this.status = `‘${this.cellLabel(id)}’ 칸에 근거를 놓았어요 · ${cell?.value ?? ''}`;
+      this.draw(`cell:${id}`);
+    } else {
+      // a clue that does not fit this cell: said in the status line, nothing lost
+      this.draw('pick');
+    }
+  }
+
+  async clearCell() {
+    const id = this.held;
+    if (!id || this.view.solved) return;
+    const [row, col] = id.split(':');
+    this.held = null;
+    const res = await this.move({ op: 'clear', row, col });
+    if (res?.status === 200) this.status = `‘${this.cellLabel(id)}’ 칸을 비웠어요.`;
+    this.draw(`cell:${id}`);
+  }
+
+  async resetGrid() {
+    if (this.view.solved) return;
+    this.held = null;
+    const res = await this.move({ op: 'reset' });
+    if (res?.status === 200) this.status = '표의 빈칸을 모두 비웠어요.';
+    this.draw('first');
+  }
+
+  logicKey(dir, el) {
+    // the picker open: the arrows go through its clues
+    if (this.held && el?.closest?.('.pz-pick')) {
+      const list = [...this.root.querySelectorAll('[data-pick]')];
+      if (!list.length) return;
+      const step = dir === 'left' || dir === 'up' ? -1 : 1;
+      const i = list.indexOf(el);
+      list[i < 0 ? 0 : (i + step + list.length) % list.length].focus();
+      return;
+    }
+    const cells = this.logicCells();
+    if (!cells.length) return;
+    const at = cells.find((k) => `cell:${k.id}` === el?.dataset?.key);
+    if (!at) {
+      this.root.querySelector('[data-cell]')?.focus();
+      return;
+    }
+    const [dr, dc] = { up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1] }[dir];
+    // the nearest fillable cell that way, in the same row or column first
+    const ahead = cells.filter((k) => (dr ? Math.sign(k.r - at.r) === dr : Math.sign(k.c - at.c) === dc));
+    const best = ahead.sort((a, b) => (Math.abs(a.r - at.r) + Math.abs(a.c - at.c) * (dr ? 3 : 1)) - (Math.abs(b.r - at.r) + Math.abs(b.c - at.c) * (dr ? 3 : 1)) || (dr ? Math.abs(a.c - at.c) - Math.abs(b.c - at.c) : Math.abs(a.r - at.r) - Math.abs(b.r - at.r)))[0];
+    if (best) this.root.querySelector(`[data-key="${CSS.escape(`cell:${best.id}`)}"]`)?.focus();
+  }
+
+  drawLogic(focus) {
+    const v = this.view;
+    const b = v.board;
+    const before = document.activeElement;
+    const keep = focus ?? (this.root.contains(before) ? before?.dataset.key : null);
+    const head = h('tr', {}, h('th', { scope: 'col' }, b.corner || ''), ...b.columns.map((c) => h('th', { scope: 'col' }, c.label)));
+    const rows = b.rows.map((row) => h('tr', { class: row.highlight ? 'is-highlight' : null },
+      h('th', { scope: 'row' }, row.label),
+      ...b.columns.map((col) => {
+        const cell = row.cells[col.id];
+        if (!cell) return h('td', { class: 'is-none' });
+        if (cell.kind === 'given') return h('td', {}, h('span', { class: 'pz-lg__given' }, cell.value));
+        const id = `${row.id}:${col.id}`;
+        const open = this.held === id;
+        const shown = cell.kind === 'filled' ? cell.value : cell.placeholder;
+        return h('td', { class: `is-fill${open ? ' is-open' : ''}` },
+          h('button', {
+            type: 'button',
+            class: `pz-lg__cell${cell.kind === 'filled' ? ' is-filled' : ' is-blank'}`,
+            'data-cell': id,
+            'data-key': `cell:${id}`,
+            disabled: v.solved,
+            'aria-pressed': open ? 'true' : 'false',
+            title: cell.clue ? `근거: ${cell.clue.name}` : cell.kind === 'filled' ? '동료가 고른 단서로 채운 칸' : null,
+            'aria-label': `${row.label} ${col.label}: ${cell.kind === 'filled' ? `${cell.value}${cell.clue ? `, 근거 ${cell.clue.name}` : ''}` : '아직 근거가 없는 칸'}`,
+            onclick: () => this.pickCell(id),
+          }, shown));
+      })));
+    const table = h('div', { class: 'pz-lg-wrap' }, h('table', { class: 'pz-lg' }, h('thead', {}, head), h('tbody', {}, ...rows)));
+    // the picker: the clues this player can lay, under the grid
+    let picker = null;
+    if (this.held && !v.solved) {
+      const cell = this.logicCells().find((k) => k.id === this.held);
+      const list = this.clues();
+      picker = h('section', { class: 'px pz-pick', 'aria-label': `${this.cellLabel(this.held)} 칸에 놓을 단서` },
+        h('div', { class: 'pz-pick__head' }, h('b', {}, `‘${this.cellLabel(this.held)}’ 칸의 근거`), h('span', {}, '이 칸을 채울 단서를 골라요. 맞지 않는 단서를 골라도 잃는 것은 없어요.')),
+        list.length
+          ? h('div', { class: 'pz-pick__list' }, ...list.map((c) => h('button', {
+            type: 'button',
+            class: `px pz-pick__clue${cell?.cell.clue?.id === c.id ? ' is-current' : ''}`,
+            'data-pick': c.id,
+            'data-key': `pick:${c.id}`,
+            disabled: this.busy,
+            onclick: () => this.layClue(c.id),
+          }, h('small', {}, c.kind === 'testimony' ? '증언' : c.kind === 'deduction' ? '추론' : '증거'), h('span', {}, c.name))))
+          : h('p', { class: 'pz-pick__empty' }, '아직 근거로 쓸 단서가 없어요.'),
+        h('div', { class: 'pz-pick__foot' },
+          cell?.cell.kind === 'filled' ? h('button', { type: 'button', class: 'px pz-btn pz-btn--plain', 'data-key': 'clearcell', onclick: () => this.clearCell() }, '칸 비우기') : null,
+          h('button', { type: 'button', class: 'px pz-btn pz-btn--plain', 'data-key': 'cancel', onclick: () => this.pickCell(this.held) }, '닫기')));
+    }
+    const panel = this.frame(v, {
+      cls: 'pz--logic',
+      body: h('div', { class: 'pz-body pz-body--wide' }, table, picker),
+      missingLine: '칸은 채워 볼 수 있지만, 이 기록이 있어야 맞춰 볼 수 있어요.',
+      keys: LOGIC_HELP,
+      buttons: [
+        h('button', { type: 'button', class: 'px pz-btn pz-btn--plain', 'data-key': 'reset', disabled: v.solved || this.busy || !b.filled, onclick: () => this.resetGrid() }, '표 비우기'),
+        h('button', { type: 'button', class: 'px pz-btn pz-btn--go', 'data-key': 'submit', disabled: v.solved || this.busy, onclick: () => this.submit() }, '표 확인'),
+      ],
+    });
+    this.root.replaceChildren(h('div', { class: 'pz-dim', onclick: () => this.close() }), panel);
+    const target = keep === 'first' ? panel.querySelector('[data-cell]:not([disabled])') ?? panel.querySelector('.pz-close')
+      : keep === 'pick' ? panel.querySelector('[data-pick]') ?? panel.querySelector('[data-key="cancel"]')
+        : keep === 'close' ? panel.querySelector('.pz-close')
+          : keep ? panel.querySelector(`[data-key="${CSS.escape(keep)}"]`) : null;
+    target?.focus({ preventScroll: keep === null });
+    if (keep === 'pick') panel.querySelector('.pz-pick')?.scrollIntoView({ block: 'nearest' });
   }
 
   // ---------- shunt: a track board ----------
@@ -435,6 +602,10 @@ export class PuzzleWindow {
     if (!v) return;
     if (v.type === 'shunt') {
       this.drawShunt(focus);
+      return;
+    }
+    if (v.type === 'logic') {
+      this.drawLogic(focus);
       return;
     }
     const before = document.activeElement;

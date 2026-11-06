@@ -54,6 +54,12 @@
 .toast.stop_warn .toast__icon { --ic: #F2A050; --ic-hi: #F8C690; --ic-lo: #C47A34; }
 .toast.stop_missed .toast__icon { --ic: #9CABB9; --ic-hi: #CBD5DF; --ic-lo: #7D8C9A; }
 .toast.stop_warn .toast__icon svg, .toast.stop_missed .toast__icon svg { width: 16px; height: 16px; }
+/* a dance (ui_hud): the note on a brass cell for an empty place in the dance, deep green once danced
+   through, grey-blue when the show starts over */
+.toast.dance_slot .toast__icon { --ic: #C9A24A; --ic-hi: #EBD08A; --ic-lo: #8E6E2A; }
+.toast.dance_done .toast__icon { --ic: #3E5E52; --ic-hi: #5C8072; --ic-lo: #2B443B; }
+.toast.dance_loop .toast__icon { --ic: #9CABB9; --ic-hi: #CBD5DF; --ic-lo: #7D8C9A; }
+.toast.dance_slot .toast__icon svg, .toast.dance_done .toast__icon svg, .toast.dance_loop .toast__icon svg { width: 16px; height: 16px; }
 .toast__text { flex: 1; min-width: 0; }
 
 /* the same toast again: one box with a count */

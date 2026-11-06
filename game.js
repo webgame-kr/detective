@@ -8,7 +8,7 @@ import { DialogueBox, portrait } from './dialogue.js';
 import { SPEED, savedSpeed, saveSpeed } from './typewriter.js';
 import { recordCase } from './casebook.js';
 import { briefingAnim } from './briefing-anim.js';
-import { toast, clueToast } from './toast.js';
+import { toast, clueToast, NOTE_ICON } from './toast.js';
 import { PuzzleWindow } from './puzzle.js';
 import { PanelWindow } from './panel.js';
 
@@ -958,6 +958,7 @@ let drawnStamp = -1;
 let viewStamp = 0;
 
 function drawLoop() {
+  renderSong();
   const canvas = $('mapCanvas');
   if (canvas && state?.map && state.room.stage === 'day') {
     const now = performance.now();
@@ -1055,6 +1056,39 @@ function renderStop() {
   icon.innerHTML = TRAIN;
   stopBox.replaceChildren(icon, h('b', { class: 'nui-stop__title' }, title), h('span', { class: 'nui-stop__line' }, line));
 }
+// A dance in this room (gimmick dance, ui_hud): a strip under the date plate, kept when the corner
+// folds: "♪ 곡 3 · 「달빛」", the song's style, and a box per song (gone by dim, now brass, to come
+// pale); dark ink for a dark song. Worked out each frame from the clock the dancers are drawn by.
+// When the last song ends and the show starts again, a toast says so (only to who is in the room).
+const songBox = h('div', { class: 'px drop nui-song', hidden: true, role: 'status' });
+const songLoops = new Map(); // dance id → the round of the show last seen here
+function renderSong() {
+  const gm = state && fieldMode() && state.room.stage === 'day' ? state.map?.gimmicks?.find((x) => x.renderer === 'dance' && x.active && x.anchorAt != null) : null;
+  const info = gm ? window.Dance?.songAt(gm.songs, gm.anchorAt, Date.now() + clockOffset, gm.beatMs) : null;
+  const show = Boolean(info);
+  if (show && !songBox.isConnected && hud.corner) hud.corner.insertBefore(songBox, stopBox.isConnected ? stopBox.nextSibling : statBox.isConnected ? statBox.nextSibling : hud.corner.querySelector('.nui-corner__top')?.nextSibling ?? null);
+  if (songBox.hidden === show) songBox.hidden = !show;
+  if (!show) {
+    songLoops.clear();
+    return;
+  }
+  const seenKey = `${gm.id}@${gm.anchorAt}`;
+  if (songLoops.has(seenKey) && info.loop > songLoops.get(seenKey)) toast(gm.loopText, 'dance_loop');
+  songLoops.set(seenKey, info.loop);
+  const key = `${seenKey}/${info.round}`;
+  if (songBox.dataset.key === key) return;
+  songBox.dataset.key = key;
+  const song = gm.songs[info.index];
+  songBox.className = `px drop nui-song${song.dark ? ' is-dark' : ''}`;
+  const icon = h('span', { class: 'nui-song__icon', 'aria-hidden': 'true' });
+  icon.innerHTML = NOTE_ICON;
+  songBox.setAttribute('aria-label', `곡 ${info.number} ${song.title}${song.style ? `, ${song.style}` : ''}, ${gm.songs.length}곡 중 ${info.number}번째`);
+  songBox.replaceChildren(icon,
+    h('b', { class: 'nui-song__title' }, `곡 ${info.number} · 「${song.title}」`),
+    song.style ? h('span', { class: 'nui-song__style' }, song.style) : null,
+    h('span', { class: 'nui-song__boxes', 'aria-hidden': 'true' }, ...gm.songs.map((_, i) => h('i', { class: i < info.index ? 'is-past' : i === info.index ? 'is-on' : '' }))));
+}
+
 // a train seen from the front (16×16 dots): body, window, bumper and wheels
 const TRAIN = '<svg viewBox="0 0 16 16"><path d="M4 1h8v1H4zM3 2h10v9H3zM2 11h12v1H2zM4 12h2v2H4zM10 12h2v2h-2z"/><path class="win" d="M5 3h6v2H5z"/></svg>';
 // the snowflake of the HUD cells and the cold toasts: a cross with four dots (16×16 dots)
@@ -2833,6 +2867,12 @@ looksReady.then(() => {
 const puzzleWin = new PuzzleWindow({
   send: (payload) => conn.act('puzzle', payload),
   onGained: (list) => list.forEach(badgeToast),
+  // what a logic grid's cell can be filled with: my notebook and the shared board, each clue once
+  clues: () => {
+    const seen = new Map();
+    for (const c of [...(state?.notebook?.clues ?? []), ...(state?.board?.clues ?? [])]) if (!seen.has(c.id)) seen.set(c.id, { id: c.id, name: c.name, kind: c.kind });
+    return [...seen.values()];
+  },
   onOpenChange(open) {
     if (open) hud.close();
     hud.setShortcutsEnabled(!open);
